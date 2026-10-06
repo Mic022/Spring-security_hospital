@@ -879,7 +879,7 @@ class UsermanagementApplicationTests {
         } finally {
             jdbc.update("delete from user_role where username='audittest'");
             jdbc.update("delete from \"user\" where username='audittest'");
-            jdbc.update("delete from role_permission where role_name='AUDITOR'");
+            jdbc.update("delete from role_permission where role_name='AUDITOR' or permission_name='REPORT_EXPORT'");
             jdbc.update("delete from app_role where name='AUDITOR'");
             jdbc.update("delete from app_permission where name='REPORT_EXPORT'");
         }
@@ -952,9 +952,36 @@ class UsermanagementApplicationTests {
             jdbc.update("delete from \"user\" where username='businessuser'");
         }
     }
+
+    /** Un usuario con permisos parciales no puede escalar privilegios. */
+    @Test
+    void preventsPrivilegeEscalation() throws Exception {
+        String admin = login("superadmin");
+        try {
+            assertThat(request("POST", "/api/user/add", "{\"username\":\"helper\",\"email\":\"helper@test.local\",\"password\":\"secret\"}", admin).statusCode()).isEqualTo(200);
+            for (String p : new String[]{"USER_UPDATE", "USER_DELETE", "PERMISSION_ASSIGN"}) {
+                assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"helper\",\"permission\":\"" + p + "\"}", admin).statusCode()).isEqualTo(200);
+            }
+            String helper = login("helper");
+            // No puede cambiar la contraseña, bloquear ni eliminar al administrador.
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"password\":\"hacked\"}", helper).statusCode()).isEqualTo(403);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"locked\":true}", helper).statusCode()).isEqualTo(403);
+            assertThat(request("DELETE", "/api/user/delete/superadmin", null, helper).statusCode()).isEqualTo(403);
+            // No puede darse un permiso que no tiene.
+            assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"helper\",\"permission\":\"ROLE_ASSIGN\"}", helper).statusCode()).isEqualTo(403);
+            // Sí puede darse uno que ya tiene (no gana nada nuevo).
+            assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"helper\",\"permission\":\"USER_UPDATE\"}", helper).statusCode()).isEqualTo(200);
+            // Nadie puede eliminarse ni bloquearse a sí mismo.
+            assertThat(request("DELETE", "/api/user/delete/superadmin", null, admin).statusCode()).isEqualTo(409);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"disabled\":true}", admin).statusCode()).isEqualTo(409);
+            // Sin token: 401. Con token sin permiso: 403.
+            assertThat(request("GET", "/api/user/all", null, null).statusCode()).isEqualTo(401);
+            assertThat(request("GET", "/api/user/all", null, "token-invalido").statusCode()).isEqualTo(401);
+            assertThat(request("GET", "/api/user/all", null, helper).statusCode()).isEqualTo(403);
+        } finally {
+            jdbc.update("delete from user_permission where username='helper'");
+            jdbc.update("delete from user_role where username='helper'");
+            jdbc.update("delete from \"user\" where username='helper'");
+        }
+    }
 }
-
-
-
-
-

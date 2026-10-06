@@ -5,6 +5,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -44,6 +46,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(customRequest -> customRequest
                 .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml").permitAll()
                 .requestMatchers("/api/auth/**").permitAll()
+                // Página de error interna de Spring: si no se permite, un 403 llega al cliente como 401.
+                .requestMatchers("/error").permitAll()
                 .requestMatchers("/api/user/**").authenticated()
                 /*.requestMatchers("/api/customers/**").hasAnyRole(UserRoles.Role.ADMIN.name(), UserRoles.Role.CUSTOMER.name())
                 .requestMatchers(HttpMethod.GET, "/api/pizzas/**").hasAnyRole(UserRoles.Role.ADMIN.name(), UserRoles.Role.CUSTOMER.name())
@@ -57,6 +61,8 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .cors(Customizer.withDefaults())
             .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            // Sin token, o con un token inválido o vencido, se responde 401. Con token pero sin permiso, 403.
+            .exceptionHandling(ex -> ex.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
 
