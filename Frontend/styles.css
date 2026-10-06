@@ -888,3 +888,13 @@ footer {
         max-width:none
     }
 }
+
+/* Panel de filtros de pacientes, citas y alertas */
+.filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    align-items: end;
+    margin-bottom: 16px;
+}
+.filters .toolbar { grid-column: 1 / -1; justify-content: flex-end; }
