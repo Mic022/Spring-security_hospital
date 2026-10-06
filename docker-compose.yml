@@ -1,6 +1,6 @@
 # PostgreSQL para desarrollo. Las credenciales coinciden con los valores
-# Uso: docker compose up -d  (detener: docker compose down)
 # por defecto de application-dev.properties; no usar en producción.
+# Uso: docker compose up -d  (detener: docker compose down)
 services:
   postgres:
     image: postgres:17
