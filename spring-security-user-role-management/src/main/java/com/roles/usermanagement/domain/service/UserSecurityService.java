@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class UserSecurityService implements UserDetailsService {
-    public static final String RANDOM_ORDER = "random_order";
     public static final String ROLE_PREFIX = "ROLE_";
     private final UserRepository userRepository;
     private final RoleCrudRepository roleRepository;

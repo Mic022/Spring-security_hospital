@@ -67,8 +67,10 @@ public class SecurityCatalogService {
             guard.requireAll(List.of(selected.getName()));
             if(role.getPermissions().stream().noneMatch(p -> p.getName().equals(permissionName))) role.getPermissions().add(selected);
         } else {
-            if((name.equals("ADMIN") && Arrays.stream(UserRoles.Authority.values()).anyMatch(a -> a.value().equals(permissionName)))
-                || (name.equals("CUSTOMER") && permissionName.equals("random_order")))
+            // Los permisos base de los roles del sistema no se pueden quitar (el bootstrap los volvería a poner).
+            boolean reserved=Arrays.stream(UserRoles.Role.values()).anyMatch(r -> r.name().equals(name)
+                    && r.permissions().stream().anyMatch(a -> a.value().equals(permissionName)));
+            if(reserved)
                 throw new ResponseStatusException(HttpStatus.CONFLICT,"El permiso base de este rol está reservado por la inicialización");
             role.getPermissions().removeIf(p -> p.getName().equals(permissionName));
         }

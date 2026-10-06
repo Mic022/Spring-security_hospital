@@ -25,8 +25,8 @@ public class UserController {
     public ResponseEntity<List<UserDto>> all() {return ResponseEntity.ok(users.getAllUsers());}
 
     @PostMapping("/add")
-    @PreAuthorize("hasAuthority('USER_CREATE') and ((#dto.role == null and (#dto.roles == null or #dto.roles.isEmpty())) or hasAuthority('ROLE_ASSIGN')) and (#dto.additionalPermissions == null or #dto.additionalPermissions.isEmpty() or hasAuthority('PERMISSION_ASSIGN'))")
-    @Operation(summary="Crear un usuario", description="CUSTOMER por defecto. Role y permisos explícitos requieren autorización adicional.")
+    @PreAuthorize("hasAuthority('USER_CREATE') and hasAuthority('ROLE_ASSIGN') and (#dto.additionalPermissions == null or #dto.additionalPermissions.isEmpty() or hasAuthority('PERMISSION_ASSIGN'))")
+    @Operation(summary="Crear un usuario", description="El rol es obligatorio. Asignar rol o permisos requiere ROLE_ASSIGN / PERMISSION_ASSIGN y no se puede conceder más de lo que uno tiene.")
     public ResponseEntity<UserDto> add(@RequestBody UserDto dto) {return ResponseEntity.ok(users.saveUser(dto));}
 
     @PutMapping("/update")

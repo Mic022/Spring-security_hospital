@@ -13,7 +13,7 @@ public class UserDto {
   private Boolean disabled;
   @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
   private String password;
-  @Schema(description = "Rol único del usuario. CUSTOMER por defecto al crear.", example = "CUSTOMER")
+  @Schema(description = "Rol único del usuario. Obligatorio al crear.", example = "MEDICO")
   private String role;
   @Schema(description = "Formato anterior compatible: como máximo un rol.", deprecated = true)
   private List<UserRoleDto> roles;

@@ -44,6 +44,6 @@ public class SecurityCatalogController {
     public RoleCatalogDto link(@PathVariable String role,@PathVariable String permission) {return catalog.link(role,permission,true);}
     @DeleteMapping("/roles/{role}/permissions/{permission}")
     @PreAuthorize("hasAuthority('ROLE_MANAGE') and hasAuthority('PERMISSION_MANAGE')")
-    @Operation(summary="Retirar un permiso de un rol", description="Concesiones individuales permanecen. Permisos base ADMIN y CUSTOMER están reservados.")
+    @Operation(summary="Retirar un permiso de un rol", description="Concesiones individuales permanecen. Los permisos base de los roles del sistema están reservados.")
     public RoleCatalogDto unlink(@PathVariable String role,@PathVariable String permission) {return catalog.link(role,permission,false);}
 }

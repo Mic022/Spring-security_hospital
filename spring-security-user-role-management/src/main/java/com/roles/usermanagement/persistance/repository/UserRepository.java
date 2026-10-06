@@ -50,7 +50,8 @@ public class UserRepository implements IUserRepository {
     } else if(dto.getRoles()!=null && !creating && result==null) {
       throw invalid("El usuario debe conservar un rol; utiliza role para cambiarlo");
     }
-    if(result==null && creating) result="CUSTOMER";
+    // El rol es obligatorio al crear: no hay rol por defecto con acceso a datos clínicos.
+    if(result==null && creating) throw invalid("El rol es obligatorio: ADMIN, MEDICO, ENFERMERO o RECEPCION");
     if(result!=null && !roles.existsById(result)) throw invalid("El rol debe existir en el catálogo");
     return result;
   }
