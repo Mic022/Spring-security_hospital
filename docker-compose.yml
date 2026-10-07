@@ -1,5 +1,7 @@
-# PostgreSQL para desarrollo. Las credenciales coinciden con los valores
-# por defecto de application-dev.properties; no usar en producción.
+# Levanta todo el proyecto: docker compose up --build
+#   Frontend: http://localhost:5500   Backend: http://localhost:8050   Swagger: /swagger-ui.html
+# Solo la base de datos (para ejecutar el backend con ./gradlew bootRun): docker compose up -d postgres
+# Credenciales de desarrollo; no usar en producción.
 services:
   postgres:
     image: postgres:17
@@ -9,7 +11,8 @@ services:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin123
     ports:
-      - "5432:5432"
+      # Solo accesible desde esta máquina; 5433 evita choques con un PostgreSQL ya instalado.
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +20,31 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  backend:
+    build: ./spring-security-user-role-management
+    container_name: hospital_backend
+    environment:
+      # Dentro de Docker la base se llama "postgres" (nombre del servicio) y usa el puerto interno 5432.
+      DB_URL: jdbc:postgresql://postgres:5432/sistema_gestion_usuarios
+      DB_USERNAME: admin
+      DB_PASSWORD: admin123
+    ports:
+      - "8050:8050"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    # Servidor web estático con los archivos de la carpeta Frontend.
+    image: nginx:alpine
+    container_name: hospital_frontend
+    volumes:
+      - ./Frontend:/usr/share/nginx/html:ro
+    ports:
+      - "5500:80"
+    depends_on:
+      - backend
 
 volumes:
   pgdata:

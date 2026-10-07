@@ -1,0 +1,10 @@
+# Finales de línea fijos para que el proyecto funcione al clonar en Windows, Linux o macOS.
+* text=auto
+# Scripts de shell: siempre LF (con CRLF, gradlew falla dentro de Docker y en Linux).
+gradlew text eol=lf
+*.sh text eol=lf
+# Scripts de Windows: siempre CRLF.
+*.bat text eol=crlf
+# Binarios
+*.jar binary
+*.png binary
