@@ -166,5 +166,10 @@ class HospitalModulesTests extends ApiTestSupport {
         crear("/api/ingresos", "{\"pacienteId\":" + e + ",\"medicoId\":" + m1 + ",\"area\":\"UCI\",\"habitacion\":\"9\"}", med1);
         // Un paciente con ingreso abierto de otro médico: 403, sin revelar que está hospitalizado (no 409).
         assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m1 + ",\"area\":\"UCI\",\"habitacion\":\"9\"}", med1).statusCode()).isEqualTo(403);
+    
+        // --- Un médico con permisos extra sigue limitado a sus pacientes ---
+        assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"medico1\",\"permission\":\"PACIENTE_MANAGE\"}", admin).statusCode()).isEqualTo(200);
+        assertThat(request("PUT", "/api/pacientes/" + b, "{\"nombre\":\"Cambiado\",\"documento\":\"200\"}", med1).statusCode()).isEqualTo(403);
+        assertThat(request("PUT", "/api/pacientes/" + a, "{\"nombre\":\"Ana Pérez\",\"documento\":\"100\"}", med1).statusCode()).isEqualTo(200);
     }
 }

@@ -119,6 +119,8 @@ public class PacienteService {
 
     public PacienteResponse actualizar(Long id, PacienteRequest request) {
         Paciente p = existente(id);
+        // Si a un médico se le concede PACIENTE_MANAGE, solo puede editar a sus pacientes.
+        acceso.verificarPaciente(p.getId());
         if (pacientes.existsByDocumentoAndIdNot(request.documento().trim(), id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe un paciente con ese documento");
         }
