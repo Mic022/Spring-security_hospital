@@ -47,6 +47,10 @@ public class IngresoService {
     public IngresoResponse crear(IngresoRequest request, String username) {
         acceso.verificarMedico(request.medicoId()); // un médico solo puede ingresar pacientes a su nombre
         Paciente paciente = pacientes.existente(request.pacienteId());
+        // ...y solo a pacientes que ya son suyos (p. ej. con una cita agendada por recepción).
+        // Sin esto, crear un ingreso le daría acceso a cualquier paciente. Va antes del 409 para no
+        // revelar si un paciente ajeno tiene un ingreso abierto.
+        acceso.verificarPaciente(paciente.getId());
         if (ingresos.existsByPacienteIdAndEstadoNot(paciente.getId(), EstadoIngreso.RECUPERADO)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "El paciente ya tiene un ingreso abierto");
         }

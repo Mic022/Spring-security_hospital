@@ -76,9 +76,13 @@ public class CitaService {
         return CitaResponse.of(cita);
     }
 
-    /** Copia los datos del request; si el usuario es médico, la cita debe quedar a su nombre. */
+    /**
+     * Copia los datos del request. Si el usuario es médico, la cita debe quedar a su nombre y el
+     * paciente debe ser ya suyo (si no, agendar una cita le daría acceso a cualquier paciente).
+     */
     private void aplicar(Cita cita, CitaRequest request) {
         acceso.verificarMedico(request.medicoId());
+        acceso.verificarPaciente(request.pacienteId());
         cita.setPaciente(pacientes.existente(request.pacienteId()));
         cita.setMedico(medicos.existente(request.medicoId()));
         cita.setFechaHora(request.fechaHora());
