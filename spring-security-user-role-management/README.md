@@ -56,7 +56,8 @@ la aplicación no arranca. En prod, Swagger y `show-sql` están desactivados.
 
 ## Seguridad
 
-1. `POST /api/auth/login` devuelve un JWT (8 h) que solo lleva el usuario.
+1. `POST /api/auth/login` devuelve un JWT (8 h) con el usuario y una huella de
+   su contraseña. Si la contraseña cambia, los tokens anteriores dejan de servir.
 2. En cada petición, `JwtFilter` valida el token y **vuelve a cargar de la base**
    el rol, los permisos y el estado de la cuenta. Bloquear una cuenta o quitarle
    un permiso tiene efecto inmediato.

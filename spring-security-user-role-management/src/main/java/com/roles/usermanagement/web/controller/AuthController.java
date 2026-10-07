@@ -3,6 +3,7 @@ package com.roles.usermanagement.web.controller;
 import com.roles.usermanagement.domain.dto.LoginDto;
 import com.roles.usermanagement.domain.service.LoginAttemptService;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import com.roles.usermanagement.web.config.JwtUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,13 +22,16 @@ public class AuthController {
     private final JwtUtil jwtUtil;
     private final com.roles.usermanagement.persistance.repository.UserRepository users;
     private final LoginAttemptService attempts;
+    private final UserDetailsService userDetails;
 
     public AuthController(AuthenticationManager authenticationManager, JwtUtil jwtUtil,
-                          com.roles.usermanagement.persistance.repository.UserRepository users, LoginAttemptService attempts) {
+                          com.roles.usermanagement.persistance.repository.UserRepository users, LoginAttemptService attempts,
+                          UserDetailsService userDetails) {
         this.authenticationManager = authenticationManager;
         this.jwtUtil = jwtUtil;
         this.users = users;
         this.attempts = attempts;
+        this.userDetails = userDetails;
     }
 
     @PostMapping("/login")
@@ -48,7 +52,9 @@ public class AuthController {
             var authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(loginDto.getUsername(), loginDto.getPassword()));
             attempts.exito(clave);
-            return ResponseEntity.ok(jwtUtil.create(authentication.getName()));
+            // Spring borra la contraseña del objeto autenticado; se recarga el hash para la huella del token.
+            String hash = userDetails.loadUserByUsername(authentication.getName()).getPassword();
+            return ResponseEntity.ok(jwtUtil.create(authentication.getName(), hash));
         } catch (AuthenticationException exception) {
             attempts.fallo(clave);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Credenciales invalidas o cuenta no disponible");

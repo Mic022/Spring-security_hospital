@@ -57,8 +57,9 @@ El documento describía dos middlewares de Node. En Spring quedaron así:
 | `permitirRoles` | `@PreAuthorize` con permisos por rol (403) |
 | El médico solo ve sus pacientes | `AccesoMedico`, usado por los cinco endpoints |
 
-El token lleva solo el usuario. El rol y los permisos se leen de la base en cada
-petición, así un cambio de permisos se aplica al instante.
+El token lleva el usuario y una huella de su contraseña (no el rol). El rol y los
+permisos se leen de la base en cada petición, así un cambio de permisos se aplica
+al instante; y si la contraseña cambia, los tokens anteriores dejan de servir.
 
 ## Decisiones tomadas
 

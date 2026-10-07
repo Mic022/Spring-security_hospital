@@ -218,4 +218,26 @@ class UsermanagementApplicationTests extends ApiTestSupport {
             deleteUser("bruteuser");
         }
     }
+
+    /** Cambiar la contraseña invalida los tokens emitidos antes del cambio. */
+    @Test
+    void passwordChangeInvalidatesOldTokens() throws Exception {
+        String admin = login("superadmin");
+        try {
+            createUser(admin, "tokenuser", "RECEPCION");
+            String viejo = login("tokenuser");
+            assertThat(request("GET", "/api/auth/me", null, viejo).statusCode()).isEqualTo(200);
+            // Cambiar otro dato no afecta al token.
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"tokenuser\",\"email\":\"nuevo@test.local\"}", admin).statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/auth/me", null, viejo).statusCode()).isEqualTo(200);
+            // Cambiar la contraseña sí: el token anterior deja de servir.
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"tokenuser\",\"password\":\"OtraClave99\"}", admin).statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/auth/me", null, viejo).statusCode()).isEqualTo(401);
+            var nuevo = request("POST", "/api/auth/login", "{\"username\":\"tokenuser\",\"password\":\"OtraClave99\"}", null);
+            assertThat(nuevo.statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/auth/me", null, nuevo.body()).statusCode()).isEqualTo(200);
+        } finally {
+            deleteUser("tokenuser");
+        }
+    }
 }

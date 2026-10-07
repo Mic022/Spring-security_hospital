@@ -41,7 +41,9 @@ public class JwtFilter extends OncePerRequestFilter {
     try {
      UserDetails user = users.loadUserByUsername(jwt.getUsername(token));
 
-     if (user.isEnabled()
+     // El token debe haberse emitido con la contraseña actual (si cambió, el token ya no sirve).
+     if (jwt.matchesPassword(token, user.getPassword())
+             && user.isEnabled()
              && user.isAccountNonLocked()
              && user.isAccountNonExpired()
              && user.isCredentialsNonExpired()) {
