@@ -43,7 +43,9 @@ public class JwtUtil {
     /** ¿El token se emitió con la contraseña actual de la cuenta? */
     public boolean matchesPassword(String token, String passwordHash) {
         String claim=verifier.verify(token).getClaim(PASSWORD_CLAIM).asString();
-        return claim!=null && claim.equals(fingerprint(passwordHash));
+        // Comparación en tiempo constante: el tiempo de respuesta no revela cuántos caracteres coinciden.
+        return claim!=null && MessageDigest.isEqual(claim.getBytes(StandardCharsets.UTF_8),
+                fingerprint(passwordHash).getBytes(StandardCharsets.UTF_8));
     }
 
     /** SHA-256 del hash BCrypt, recortado: identifica la contraseña sin revelar nada útil de ella. */
