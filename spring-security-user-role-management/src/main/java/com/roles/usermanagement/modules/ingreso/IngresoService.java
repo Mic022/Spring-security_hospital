@@ -46,8 +46,10 @@ public class IngresoService {
     /** Registra un ingreso nuevo en estado INGRESADO. Un paciente solo puede tener un ingreso abierto. */
     public IngresoResponse crear(IngresoRequest request, String username) {
         acceso.verificarMedico(request.medicoId()); // un médico solo puede ingresar pacientes a su nombre
-        Paciente paciente = pacientes.existente(request.pacienteId());
-        // ...y solo a pacientes que ya son suyos (p. ej. con una cita agendada por recepción).
+        // Bloquea al paciente: si llegan dos ingresos a la vez, el segundo espera y ve el primero,
+        // así la comprobación de "un ingreso abierto" no la pasan los dos.
+        Paciente paciente = pacientes.existenteBloqueado(request.pacienteId());
+        // El médico, además, solo puede ingresar a pacientes que ya son suyos (p. ej. con una cita agendada por recepción).
         // Sin esto, crear un ingreso le daría acceso a cualquier paciente. Va antes del 409 para no
         // revelar si un paciente ajeno tiene un ingreso abierto.
         acceso.verificarPaciente(paciente.getId());

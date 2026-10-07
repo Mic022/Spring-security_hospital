@@ -47,6 +47,7 @@ public class UserService {
     if (Boolean.TRUE.equals(userDto.getLocked()) || Boolean.TRUE.equals(userDto.getDisabled())) {
       guard.requireNotSelf(userDto.getUsername(), "No puedes bloquear ni deshabilitar tu propia cuenta");
     }
+    guard.requireNotOwnRoleChange(userDto.getUsername(), requestedRole(userDto));
     guard.requireRole(requestedRole(userDto));
     guard.requireAll(userDto.getAdditionalPermissions());
     return userRepository.update(userDto);
@@ -82,6 +83,7 @@ public class UserService {
 
   public UserRoleDto assignRoleToUser(UserRoleDto userRoleDto) {
     guard.requireCanManage(userRoleDto.getUsername());
+    guard.requireNotOwnRoleChange(userRoleDto.getUsername(), userRoleDto.getRole());
     guard.requireRole(userRoleDto.getRole());
     return userRoleRepository.save(userRoleDto);
   }
