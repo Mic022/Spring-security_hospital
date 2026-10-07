@@ -1,6 +1,7 @@
 'use strict';
 
 const $ = s => document.querySelector(s);
+// Escapa HTML antes de insertarlo con innerHTML: evita que un dato (p. ej. un nombre) ejecute código (XSS).
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({
     '&': '&amp;',
     '<': '&lt;',
@@ -9,12 +10,14 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({
     "'": '&#39;'
 }[c]));
 
-// Fecha sin hora (AAAA-MM-DD → formato local)
+// Fecha sin hora (AAAA-MM-DD → formato local).
+// Se añade T00:00:00 para leerla en hora local; sin eso se toma como UTC y en Colombia mostraría el día anterior.
 const day = v => v ? new Date(v + 'T00:00:00').toLocaleDateString('es-CO') : '—';
 
 const date = v => v ? new Date(v).toLocaleString('es-CO') : '—';
 const path = v => encodeURIComponent(v);
 
+// sessionStorage se borra al cerrar la pestaña (el token no queda guardado); localStorage sí persiste.
 const state = {
     token: sessionStorage.getItem('nexo.token'),
     base: localStorage.getItem('nexo.base') || 'http://localhost:8050',
@@ -45,6 +48,7 @@ const ESTADOS_CITA = ['PROGRAMADA', 'REALIZADA', 'CANCELADA'];
 const HOSPITAL = ['pacientes', 'citas', 'alertas', 'medicos'];
 const PAGED = ['pacientes', 'citas', 'alertas'];
 
+// Solo deciden qué se muestra; la seguridad real la aplica el backend en cada petición.
 const can = p => state.me?.effectivePermissions?.includes(p);
 const any = ps => ps.some(can);
 
@@ -79,6 +83,7 @@ function logout() {
     $('#login-form').password.value = '';
 }
 
+// Cliente REST: añade el token, convierte la respuesta en JSON (o texto) y traduce los errores a mensajes.
 async function api(url, { method = 'GET', body, auth = true } = {}) {
     const headers = { Accept: 'application/json, text/plain' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -95,6 +100,7 @@ async function api(url, { method = 'GET', body, auth = true } = {}) {
         throw new Error('No se pudo conectar con el servidor. Revisa la URL, Spring Boot y PostgreSQL.');
     }
 
+    // El backend responde a veces JSON y a veces texto (p. ej. el token del login): si no es JSON, se deja como texto.
     const text = await response.text();
     let data = text;
     try {
@@ -102,9 +108,12 @@ async function api(url, { method = 'GET', body, auth = true } = {}) {
     } catch {}
 
     if (!response.ok) {
+        // 401 = token ausente, vencido o invalidado: se cierra la sesión. Un 403 en /me indica lo mismo.
         if (auth && (response.status === 401 || (response.status === 403 && url === '/api/auth/me'))) {
             logout();
         }
+        // Mensaje de error: el texto tal cual, o "campo: mensaje" de cada error de validación,
+        // descartando los campos genéricos de Spring (timestamp, status...).
         let error = typeof data === 'string'
             ? data
             : (data?.detail || data?.message || Object.entries(data || {})
@@ -153,6 +162,7 @@ $('#login-form').addEventListener('submit', async e => {
     $('#login-error').textContent = '';
 
     try {
+        // Quita las barras finales ("http://x:8050/" → "http://x:8050"); new URL() falla si la dirección no es válida.
         const base = f.base.value.trim().replace(/\/+$/, '');
         const u = new URL(base);
         if (!['http:', 'https:'].includes(u.protocol)) {
@@ -182,6 +192,7 @@ $('#login-form').addEventListener('submit', async e => {
 
 $('#logout').onclick = logout;
 $('#menu-toggle').onclick = () => $('#sidebar').classList.toggle('open');
+// Un solo listener para todo el menú: closest() encuentra el botón aunque se pulse su icono.
 $('#navigation').onclick = e => {
     const b = e.target.closest('[data-nav]');
     if (b) navigate(b.dataset.nav);
@@ -262,7 +273,8 @@ async function render() {
         if (read && view === 'medicos') {
             rows = await api(conf.endpoint);
         } else if (read) {
-            // Los filtros guardados se envían como parámetros opcionales de la URL
+            // Los filtros guardados se envían como parámetros opcionales de la URL.
+            // URLSearchParams arma "?estado=...&page=0&size=20" y codifica los caracteres especiales.
             const query = new URLSearchParams({ ...clean(state.filters[view]), page: state.page, size: 20 });
             const result = await api(conf.endpoint + '?' + query);
             rows = result.content || [];
@@ -340,6 +352,7 @@ function select(name, label, values, current = '', empty = 'Todos', extra = '') 
 async function filtersPanel(view) {
     const f = state.filters[view] || {};
     const medicos = ['pacientes', 'citas'].includes(view) ? (await medicoList()).map(m => [m.id, m.nombre]) : [];
+    // Si la cuenta no puede listar médicos, se pide el ID a mano en lugar del desplegable.
     const medico = medicos.length ? select('medico', 'Médico', medicos, f.medico) : field('ID del médico', 'medico', f.medico, 'number', 'min="1"');
     let body = '';
 
@@ -367,6 +380,8 @@ async function filtersPanel(view) {
 }
 
 function table(view, rows) {
+    // cells(fila, índice) devuelve el HTML de cada columna. Los botones guardan el índice de la fila
+    // (data-index) para que el manejador de acciones sepa sobre qué registro actuar.
     let headers;
     let cells;
     const action = (name, label, i, cls = 'link-button') => button(name, label, `data-index="${i}"`, cls);
@@ -375,7 +390,7 @@ function table(view, rows) {
         headers = ['Paciente', 'Ingreso actual', 'Estado', 'Acciones'];
         cells = (r, i) => {
             const ing = r.ultimoIngreso;
-            const abierto = ing && ing.estado !== 'RECUPERADO';
+            const abierto = ing && ing.estado !== 'RECUPERADO'; // con ingreso abierto se actualiza; si no, se puede ingresar
             return [
                 `<span class="cell-title">${esc(r.nombre)}</span><small class="cell-sub">Doc. ${esc(r.documento)} · #${r.id}</small>`,
                 ing ? `${esc(ing.area)} · Hab. ${esc(ing.habitacion)}<small class="cell-sub">${esc(ing.medicoNombre)} · ${date(ing.fechaIngreso)}</small>` : '<span class="muted">Sin ingresos</span>',
@@ -489,6 +504,7 @@ function table(view, rows) {
 async function dashboard() {
     const first = state.me.username;
     // Totales de cada módulo; en alertas se cuentan solo las pendientes
+    // size=1: solo interesa totalElements de la página, no los registros. Las tres peticiones van en paralelo (Promise.all).
     const metricUrls = { pacientes: ['PACIENTE_READ', '/api/pacientes?size=1'], citas: ['CITA_READ', '/api/citas?size=1'], alertas: ['ALERTA_READ', '/api/alertas?estado=PENDIENTE&size=1'] };
     const metrics = await Promise.all(Object.entries(metricUrls).map(async ([key, [perm, url]]) => ({
         key,
@@ -559,6 +575,8 @@ function modal(title, body, onSubmit, label = 'Guardar') {
 
 $('#modal-close').onclick = $('#modal-cancel').onclick = () => $('#modal').close();
 
+// Cierra el modal al hacer clic fuera del cuadro: el fondo oscuro también es el <dialog>,
+// así que se comprueba si el clic cayó fuera de su rectángulo visible.
 $('#modal').addEventListener('click', e => {
     if (e.target === $('#modal')) {
         const rect = e.target.getBoundingClientRect();
@@ -580,6 +598,7 @@ $('#modal-form').onsubmit = async e => {
     try {
         if (await submit(new FormData(e.currentTarget)) === KEEP) return;
         $('#modal').close();
+        // Tras guardar se vacía la caché y se recargan los permisos propios (el cambio pudo afectar a esta cuenta).
         state.cache = {};
         await refreshMe();
         await navigate(state.view, state.page);
@@ -611,6 +630,7 @@ async function options(url) {
     return await api(url);
 }
 
+// Desplegable de roles o permisos si la cuenta puede consultar el catálogo; si no, campo de texto libre.
 async function picker(name, label, kind, current = '') {
     let values = [];
     if (kind === 'role' && can('ROLE_MANAGE')) {
@@ -666,6 +686,7 @@ async function entityForm(row, askId = false) {
             (medicos.length
                 ? select('medicoId', 'Médico', medicos, row.medicoId, 'Selecciona un médico', 'required')
                 : field('ID del médico', 'medicoId', row.medicoId, 'number', 'required min="1"')) +
+            // datetime-local solo acepta "AAAA-MM-DDTHH:mm": se recortan segundos y fracciones.
             field('Fecha y hora', 'fechaHora', (row.fechaHora || '').slice(0, 16), 'datetime-local', 'required') +
             field('Motivo', 'motivo', row.motivo, 'text', 'maxlength="255"') +
             (edit ? select('estado', 'Estado', ESTADOS_CITA, row.estado, null) : '') +
@@ -723,6 +744,7 @@ async function entityForm(row, askId = false) {
         roles: 'rol',
         permissions: 'permiso'
     }[view]), body, async f => {
+        // Object.fromEntries convierte el FormData en un objeto { nombreDelCampo: valor } listo para enviar como JSON.
         let data = Object.fromEntries(f);
         const recordId = askId ? data.recordId : row.id;
         delete data.recordId;
@@ -732,12 +754,14 @@ async function entityForm(row, askId = false) {
             for (const k of Object.keys(data)) if (data[k] === '') data[k] = null;
         }
         if (view === 'citas') {
+            // El formulario pide el documento; el backend espera el id del paciente.
             if (!edit) data.pacienteId = await pacienteId(data.documento);
             delete data.documento;
             data.pacienteId = Number(data.pacienteId);
             data.medicoId = Number(data.medicoId);
         }
         if (view === 'users') {
+            // Un checkbox sin marcar no aparece en el FormData: has() lo convierte en true/false.
             data.locked = f.has('locked');
             data.disabled = f.has('disabled');
             if (edit && !data.password) delete data.password;
@@ -746,6 +770,7 @@ async function entityForm(row, askId = false) {
             data.permissions = f.getAll('permissions');
         }
 
+        // Usuarios, roles y permisos tienen rutas propias; los módulos del hospital usan endpoint y endpoint/{id}.
         const url = view === 'users'
             ? (edit ? '/api/user/update' : '/api/user/add')
             : view === 'roles'
@@ -828,6 +853,7 @@ async function rolePermissions(row) {
                 ${chips(row.permissions)}
             </div>
         `,
+        // La operación elegida es el método HTTP: PUT agrega el permiso al rol y DELETE lo retira.
         f => api(`/api/roles/${path(row.name)}/permissions/${path(f.get('permission'))}`, { method: f.get('operation') })
     );
 }
@@ -924,6 +950,8 @@ async function reporte(row) {
     );
 }
 
+// Ejecuta la acción del botón pulsado (atributo data-action). row es el registro de la fila,
+// recuperado por su data-index; en botones fuera de la tabla queda undefined.
 async function handle(action, element) {
     const row = state.rows[Number(element.dataset.index)];
 
@@ -1082,10 +1110,11 @@ async function handle(action, element) {
     }
 }
 
+// Delegación de eventos: un listener para todos los botones, también los que se crean después con innerHTML.
 async function onAction(e) {
     const b = e.target.closest('[data-action]');
     if (!b || b.disabled) return;
-    b.disabled = true;
+    b.disabled = true; // evita doble clic mientras la petición está en curso
 
     try {
         await handle(b.dataset.action, b);
@@ -1105,6 +1134,7 @@ $('#content').addEventListener('submit', e => {
     handle('apply-filters', e.target);
 });
 
+// Búsqueda rápida: oculta las filas de la página actual que no contienen el texto (no consulta al servidor).
 $('#content').addEventListener('input', e => {
     if (e.target.id !== 'filter') return;
     const term = e.target.value.toLocaleLowerCase();
@@ -1141,6 +1171,7 @@ $('#session-button').onclick = async () => {
     }
 };
 
+// Al recargar la página con un token guardado se intenta entrar directamente; si ya no sirve, vuelve al login.
 if (state.token) {
     enter().catch(() => {
         logout();

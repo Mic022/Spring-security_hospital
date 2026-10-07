@@ -10,8 +10,9 @@ Basada en la plantilla de seguridad de Cristian Díaz (ver autoría al final).
 ## Estructura
 
 ```text
-├── docker-compose.yml                   PostgreSQL para desarrollo
+├── docker-compose.yml                   PostgreSQL, backend y frontend con un solo comando
 ├── spring-security-user-role-management/
+│   ├── Dockerfile                       Imagen del backend (compila el jar dentro de Docker)
 │   ├── README.md                        Guía del backend: configuración y endpoints
 │   ├── docs/MODULOS_HOSPITAL.md         Diseño de los módulos y decisiones tomadas
 │   └── src/                             Código y tests

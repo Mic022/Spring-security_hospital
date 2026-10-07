@@ -3,6 +3,7 @@ package com.roles.usermanagement.domain.service;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,9 +33,12 @@ public class LoginAttemptService {
         this.clock = clock;
     }
 
-    /** Clave de conteo: usuario (sin distinguir mayúsculas) + IP. */
+    /**
+     * Clave de conteo: usuario (sin distinguir mayúsculas) + IP.
+     * Locale.ROOT da el mismo resultado en cualquier idioma del servidor (en turco, "I" no pasa a "ı").
+     */
     public static String clave(String username, String ip) {
-        return username.trim().toLowerCase() + "|" + ip;
+        return username.trim().toLowerCase(Locale.ROOT) + "|" + ip;
     }
 
     /** Minutos que faltan para poder intentar de nuevo; 0 si no está bloqueado. */
