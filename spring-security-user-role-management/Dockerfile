@@ -14,5 +14,8 @@ RUN ./gradlew --no-daemon bootJar -x test
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY --from=build /app/build/libs/usermanagement-0.0.1-SNAPSHOT.jar app.jar
+# La aplicación no se ejecuta como root: si alguien la compromete, tiene menos permisos en el contenedor.
+RUN groupadd --system app && useradd --system --gid app --no-create-home app
+USER app
 EXPOSE 8050
 ENTRYPOINT ["java", "-jar", "app.jar"]
