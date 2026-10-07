@@ -15,6 +15,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -38,11 +40,20 @@ public class PacienteService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Paciente no encontrado"));
     }
 
-    /** Respuesta con el ingreso más reciente del paciente. */
+    /**
+     * Respuesta con el ingreso más reciente del paciente. El ingreso es información clínica:
+     * solo se incluye si la cuenta tiene PACIENTE_READ (recepción solo ve los datos personales).
+     */
     private PacienteResponse dto(Paciente p) {
-        IngresoResponse ultimo = ingresos.findFirstByPacienteIdOrderByFechaIngresoDesc(p.getId())
+        IngresoResponse ultimo = !puedeVerClinico() ? null : ingresos.findFirstByPacienteIdOrderByFechaIngresoDesc(p.getId())
                 .map(IngresoResponse::of).orElse(null);
         return new PacienteResponse(p.getId(), p.getNombre(), p.getDocumento(), p.getFechaNacimiento(), p.getTelefono(), ultimo);
+    }
+
+    /** ¿La cuenta actual puede ver información clínica (ingresos)? */
+    private static boolean puedeVerClinico() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream().anyMatch(a -> "PACIENTE_READ".equals(a.getAuthority()));
     }
 
     /**

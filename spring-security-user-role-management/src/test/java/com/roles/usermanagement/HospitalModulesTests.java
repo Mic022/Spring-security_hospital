@@ -77,6 +77,13 @@ class HospitalModulesTests extends ApiTestSupport {
         assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m2 + ",\"area\":\"OTRA\",\"habitacion\":\"7\"}", admin).statusCode()).isEqualTo(400);
         assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m2 + ",\"area\":\"UCI\",\"habitacion\":\"1\"}", enf).statusCode()).isEqualTo(403);
 
+        // --- Recepción solo ve datos personales, nunca el ingreso (información clínica) ---
+        assertThat(json(request("GET", "/api/pacientes/documento/100", null, rec)).path("ultimoIngreso").isNull()).isTrue();
+        var editado = request("PUT", "/api/pacientes/" + a, "{\"nombre\":\"Ana Pérez\",\"documento\":\"100\",\"telefono\":\"300\"}", rec);
+        assertThat(editado.statusCode()).isEqualTo(200);
+        assertThat(json(editado).path("ultimoIngreso").isNull()).isTrue();
+        assertThat(json(request("GET", "/api/pacientes/documento/100", null, admin)).path("ultimoIngreso").path("area").asText()).isEqualTo("UCI");
+
         // --- Restricción del médico: cada uno ve solo a sus pacientes ---
         assertThat(total(request("GET", "/api/pacientes", null, med1))).isEqualTo(1);
         assertThat(request("GET", "/api/pacientes", null, med1).body()).contains("Ana Pérez").doesNotContain("Bruno");
