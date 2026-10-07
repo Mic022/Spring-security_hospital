@@ -5,6 +5,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.http.HttpResponse;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -171,5 +178,36 @@ class HospitalModulesTests extends ApiTestSupport {
         assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"medico1\",\"permission\":\"PACIENTE_MANAGE\"}", admin).statusCode()).isEqualTo(200);
         assertThat(request("PUT", "/api/pacientes/" + b, "{\"nombre\":\"Cambiado\",\"documento\":\"200\"}", med1).statusCode()).isEqualTo(403);
         assertThat(request("PUT", "/api/pacientes/" + a, "{\"nombre\":\"Ana Pérez\",\"documento\":\"100\"}", med1).statusCode()).isEqualTo(200);
+    }
+
+    /** Varias peticiones de ingreso simultáneas para el mismo paciente: solo una se registra. */
+    @Test
+    void ingresosSimultaneosDejanUnSoloIngresoAbierto() throws Exception {
+        String admin = login("superadmin");
+        long medico = crear("/api/medicos", "{\"nombre\":\"Dra. Ruiz\",\"especialidad\":\"Medicina interna\"}", admin);
+        long paciente = crear("/api/pacientes", "{\"nombre\":\"Ana Pérez\",\"documento\":\"500\"}", admin);
+        String body = "{\"pacienteId\":" + paciente + ",\"medicoId\":" + medico + ",\"area\":\"UCI\",\"habitacion\":\"101\"}";
+
+        int peticiones = 8;
+        ExecutorService hilos = Executors.newFixedThreadPool(peticiones);
+        CountDownLatch salida = new CountDownLatch(1); // todas las peticiones arrancan a la vez
+        try {
+            List<Future<Integer>> respuestas = new ArrayList<>();
+            for (int i = 0; i < peticiones; i++) {
+                respuestas.add(hilos.submit(() -> {
+                    salida.await();
+                    return request("POST", "/api/ingresos", body, admin).statusCode();
+                }));
+            }
+            salida.countDown();
+            List<Integer> codigos = new ArrayList<>();
+            for (Future<Integer> r : respuestas) codigos.add(r.get(30, TimeUnit.SECONDS));
+
+            assertThat(codigos).containsOnly(201, 409);
+            assertThat(codigos).filteredOn(c -> c == 201).hasSize(1);
+        } finally {
+            hilos.shutdownNow();
+        }
+        assertThat(jdbc.queryForObject("select count(*) from ingreso where id_paciente = ?", Integer.class, paciente)).isEqualTo(1);
     }
 }

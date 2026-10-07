@@ -41,6 +41,15 @@ public class PacienteService {
     }
 
     /**
+     * Como existente(), pero bloquea la fila del paciente hasta el fin de la transacción.
+     * Dos peticiones simultáneas sobre el mismo paciente se ejecutan una detrás de otra.
+     */
+    public Paciente existenteBloqueado(Long id) {
+        return pacientes.findForUpdate(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Paciente no encontrado"));
+    }
+
+    /**
      * Respuesta con el ingreso más reciente del paciente. El ingreso es información clínica:
      * solo se incluye si la cuenta tiene PACIENTE_READ (recepción solo ve los datos personales).
      */

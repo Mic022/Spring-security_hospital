@@ -1,8 +1,10 @@
 package com.roles.usermanagement.modules.paciente;
 
+import jakarta.persistence.LockModeType;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -12,6 +14,11 @@ public interface PacienteRepository extends JpaRepository<Paciente, Long>, JpaSp
     Optional<Paciente> findByDocumento(String documento);
 
     boolean existsByDocumentoAndIdNot(String documento, Long id);
+
+    /** Lee el paciente bloqueando su fila (SELECT ... FOR UPDATE) hasta que termine la transacción. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Paciente p where p.id = :id")
+    Optional<Paciente> findForUpdate(@Param("id") Long id);
 
     /** "Sus pacientes": el paciente tiene al menos un ingreso o una cita con ese médico. */
     @Query("""
