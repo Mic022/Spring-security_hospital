@@ -195,4 +195,27 @@ class UsermanagementApplicationTests extends ApiTestSupport {
             deleteUser("helper");
         }
     }
+
+    /** Fuerza bruta: 5 fallos seguidos bloquean el login de ese usuario (desde esa IP). */
+    @Test
+    void blocksLoginAfterRepeatedFailures() throws Exception {
+        String admin = login("superadmin");
+        String bad = "{\"username\":\"bruteuser\",\"password\":\"Incorrecta1\"}";
+        try {
+            createUser(admin, "bruteuser", "RECEPCION");
+            // Un login correcto antes del máximo reinicia el contador.
+            for (int i = 0; i < 4; i++) assertThat(request("POST", "/api/auth/login", bad, null).statusCode()).isEqualTo(401);
+            login("bruteuser");
+            for (int i = 0; i < 4; i++) assertThat(request("POST", "/api/auth/login", bad, null).statusCode()).isEqualTo(401);
+            // Quinto fallo seguido: bloqueado, incluso con la contraseña correcta.
+            assertThat(request("POST", "/api/auth/login", bad, null).statusCode()).isEqualTo(401);
+            var bloqueado = request("POST", "/api/auth/login", "{\"username\":\"BruteUser\",\"password\":\"Secret123\"}", null);
+            assertThat(bloqueado.statusCode()).isEqualTo(429);
+            assertThat(bloqueado.body()).contains("15 minuto");
+            // Las demás cuentas no se ven afectadas.
+            assertThat(login("superadmin")).isNotBlank();
+        } finally {
+            deleteUser("bruteuser");
+        }
+    }
 }

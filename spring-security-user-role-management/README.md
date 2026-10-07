@@ -72,6 +72,9 @@ la aplicación no arranca. En prod, Swagger y `show-sql` están desactivados.
 **Contraseñas:** se guardan con BCrypt y deben tener entre 8 y 72 caracteres,
 con al menos una letra y un número.
 
+**Fuerza bruta:** tras 5 intentos de login fallidos seguidos, ese usuario desde
+esa IP recibe 429 durante 15 minutos (`LOGIN_MAX_INTENTOS`, `LOGIN_BLOQUEO`).
+
 **Protección contra escalada de privilegios** (`PrivilegeGuard`): nadie puede
 conceder un rol o permiso que no tiene, ni modificar una cuenta con más permisos
 que la suya. Tampoco puede eliminarse, bloquearse ni deshabilitarse a sí mismo.
