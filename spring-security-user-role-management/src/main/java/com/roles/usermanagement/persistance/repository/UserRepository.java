@@ -32,6 +32,15 @@ public class UserRepository implements IUserRepository {
   private ResponseStatusException invalid(String message) {
     return new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
   }
+  /**
+   * Política de contraseñas: de 8 a 72 caracteres (72 es el límite de BCrypt),
+   * con al menos una letra y un número.
+   */
+  private void validatePassword(String password) {
+    if(password==null || password.length()<8 || password.length()>72
+        || !password.matches(".*\\p{L}.*") || !password.matches(".*\\d.*"))
+      throw invalid("La contraseña debe tener entre 8 y 72 caracteres, con al menos una letra y un número");
+  }
   private UserEntity account(String username) {
     if(username == null || username.isBlank()) throw invalid("El usuario es obligatorio");
     return users.findForUpdate(username).orElseThrow(() ->
@@ -50,7 +59,8 @@ public class UserRepository implements IUserRepository {
     } else if(dto.getRoles()!=null && !creating && result==null) {
       throw invalid("El usuario debe conservar un rol; utiliza role para cambiarlo");
     }
-    if(result==null && creating) result="CUSTOMER";
+    // El rol es obligatorio al crear: no hay rol por defecto con acceso a datos clínicos.
+    if(result==null && creating) throw invalid("El rol es obligatorio: ADMIN, MEDICO, ENFERMERO o RECEPCION");
     if(result!=null && !roles.existsById(result)) throw invalid("El rol debe existir en el catálogo");
     return result;
   }
@@ -87,6 +97,7 @@ public class UserRepository implements IUserRepository {
     if(users.existsById(dto.getUsername())) throw new ResponseStatusException(HttpStatus.CONFLICT,"El usuario ya existe");
     if(dto.getEmail()==null || dto.getEmail().isBlank()) throw invalid("El correo es obligatorio");
     if(dto.getPassword()==null || dto.getPassword().isBlank()) throw invalid("La contraseña es obligatoria");
+    validatePassword(dto.getPassword());
     String role=requestedRole(dto,true);
     UserEntity user=new UserEntity(); user.setUsername(dto.getUsername()); user.setEmail(dto.getEmail());
     user.setPassword(encoder.encode(dto.getPassword())); user.setLocked(Boolean.TRUE.equals(dto.getLocked()));
@@ -108,6 +119,7 @@ public class UserRepository implements IUserRepository {
     if(dto.getDisabled()!=null) user.setDisabled(dto.getDisabled());
     if(dto.getPassword()!=null) {
       if(dto.getPassword().isBlank()) throw invalid("La contraseña no puede estar vacía");
+      validatePassword(dto.getPassword());
       user.setPassword(encoder.encode(dto.getPassword()));
     }
     setRole(user,role); setPermissions(user,dto.getAdditionalPermissions());
