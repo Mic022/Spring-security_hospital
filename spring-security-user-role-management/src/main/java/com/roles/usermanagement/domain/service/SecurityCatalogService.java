@@ -18,6 +18,7 @@ public class SecurityCatalogService {
         this.roles=roles; this.permissions=permissions; this.guard=guard;
     }
     private String valid(String name) {
+        // Una letra seguida de hasta 49 letras, números o "_" (máximo 50 caracteres).
         if(name==null || !name.matches("[A-Za-z][A-Za-z0-9_]{0,49}"))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"El nombre debe tener entre 1 y 50 caracteres: letras, números y guion bajo; debe comenzar con una letra");
         return name;
@@ -68,6 +69,7 @@ public class SecurityCatalogService {
             if(role.getPermissions().stream().noneMatch(p -> p.getName().equals(permissionName))) role.getPermissions().add(selected);
         } else {
             // Los permisos base de los roles del sistema no se pueden quitar (el bootstrap los volvería a poner).
+            // ¿Es un rol del sistema y el permiso está entre sus permisos base del enum?
             boolean reserved=Arrays.stream(UserRoles.Role.values()).anyMatch(r -> r.name().equals(name)
                     && r.permissions().stream().anyMatch(a -> a.value().equals(permissionName)));
             if(reserved)

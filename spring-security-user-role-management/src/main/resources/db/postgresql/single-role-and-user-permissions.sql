@@ -1,4 +1,5 @@
 -- Normalize legacy accounts to one role while preserving their effective permissions.
+-- Se ejecuta en cada arranque (UserRoleSchemaMigration); todo es idempotente: si ya se aplicó, no cambia nada.
 DO $$
 BEGIN
 CREATE TABLE IF NOT EXISTS user_role_history (
@@ -15,8 +16,12 @@ CREATE TABLE IF NOT EXISTS user_permission (
     PRIMARY KEY (username, permission_name)
     );
 
+-- Impide que otra conexión cambie roles mientras dura la migración.
 LOCK TABLE user_role IN SHARE ROW EXCLUSIVE MODE;
 
+    -- Rol que conserva cada usuario: ADMIN si lo tiene; si no, el más antiguo.
+    -- row_number() numera los roles de cada usuario en ese orden y se queda con el 1.
+    -- La tabla temporal se borra sola al terminar la transacción (ON COMMIT DROP).
     CREATE TEMP TABLE migration_keep_role ON COMMIT DROP AS
 SELECT
     username,
@@ -36,6 +41,7 @@ FROM (
      ) ranked
 WHERE position = 1;
 
+-- Guarda en el historial los roles que se van a quitar.
 INSERT INTO user_role_history (username, role, granted_date)
 SELECT
     ur.username,
@@ -47,6 +53,8 @@ FROM user_role ur
                   AND kept.role <> ur.role
     ON CONFLICT DO NOTHING;
 
+-- Los permisos de los roles quitados pasan a ser permisos individuales,
+-- salvo los que el rol conservado ya incluye (NOT EXISTS). Así nadie pierde acceso.
 INSERT INTO user_permission (username, permission_name)
 SELECT DISTINCT
     ur.username,
@@ -65,11 +73,13 @@ WHERE NOT EXISTS (
 )
     ON CONFLICT DO NOTHING;
 
+-- Borra los roles sobrantes: cada usuario queda solo con el elegido.
 DELETE FROM user_role ur
     USING migration_keep_role kept
 WHERE ur.username = kept.username
   AND ur.role <> kept.role;
 
+-- Usuarios sin ningún rol reciben CUSTOMER (rol de la plantilla original).
 INSERT INTO user_role (username, role, granted_date)
 SELECT
     u.username,
@@ -82,6 +92,8 @@ WHERE NOT EXISTS (
     WHERE ur.username = u.username
 );
 
+-- Crea UNIQUE(username) en user_role solo si no existe: lo busca en el catálogo de
+-- PostgreSQL (pg_constraint, contype 'u' = unique) sobre la columna username.
 IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint c

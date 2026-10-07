@@ -37,15 +37,21 @@ public class UserRepository implements IUserRepository {
    * con al menos una letra y un número.
    */
   private void validatePassword(String password) {
+    // \p{L} = cualquier letra (incluye tildes y ñ); \d = cualquier dígito.
     if(password==null || password.length()<8 || password.length()>72
         || !password.matches(".*\\p{L}.*") || !password.matches(".*\\d.*"))
       throw invalid("La contraseña debe tener entre 8 y 72 caracteres, con al menos una letra y un número");
   }
   private UserEntity account(String username) {
     if(username == null || username.isBlank()) throw invalid("El usuario es obligatorio");
+    // findForUpdate bloquea la fila hasta el fin de la transacción: dos cambios simultáneos no se pisan.
     return users.findForUpdate(username).orElseThrow(() ->
         new ResponseStatusException(HttpStatus.NOT_FOUND,"El usuario no existe"));
   }
+  /**
+   * Rol pedido en el DTO. Acepta el campo role o la lista roles (formato antiguo), que debe
+   * traer un único elemento coherente con role. Devuelve null si no se pide cambiar el rol.
+   */
   private String requestedRole(UserDto dto, boolean creating) {
     String result=dto.getRole();
     if(dto.getRoles()!=null && !dto.getRoles().isEmpty()) {
@@ -57,6 +63,7 @@ public class UserRepository implements IUserRepository {
       if(result!=null && !result.equals(item.getRole())) throw invalid("role y roles deben coincidir");
       result=item.getRole();
     } else if(dto.getRoles()!=null && !creating && result==null) {
+      // "roles": [] al actualizar dejaría al usuario sin rol.
       throw invalid("El usuario debe conservar un rol; utiliza role para cambiarlo");
     }
     // El rol es obligatorio al crear: no hay rol por defecto con acceso a datos clínicos.
@@ -64,14 +71,17 @@ public class UserRepository implements IUserRepository {
     if(result!=null && !roles.existsById(result)) throw invalid("El rol debe existir en el catálogo");
     return result;
   }
+  /** Deja al usuario con un único rol: borra los demás y crea el nuevo si no lo tenía. */
   private void setRole(UserEntity user,String role) {
     if(role==null) return;
     if(user.getRoles()==null) user.setRoles(new ArrayList<>());
+    // Se recorre una copia porque no se puede quitar elementos de la lista mientras se itera.
     for(UserRoleEntity assignment:new ArrayList<>(user.getRoles())) {
       if(!role.equals(assignment.getRole())) {
         user.getRoles().remove(assignment); userRoles.delete(assignment);
       }
     }
+    // Ejecuta los DELETE antes del INSERT para no chocar con la restricción de un rol por usuario.
     em.flush();
     if(user.getRoles().stream().noneMatch(assignment -> role.equals(assignment.getRole()))) {
       UserRoleEntity assignment=new UserRoleEntity();
@@ -84,7 +94,8 @@ public class UserRepository implements IUserRepository {
     return permissions.findById(name).orElseThrow(() -> invalid("El permiso debe existir en el catálogo"));
   }
   private void setPermissions(UserEntity user,List<String> names) {
-    if(names==null) return;
+    if(names==null) return; // null = no tocar; lista vacía = quitar todos los permisos individuales
+    // LinkedHashSet descarta duplicados conservando el orden; si un permiso no existe, falla antes de modificar nada.
     Set<PermissionEntity> selected=new LinkedHashSet<>();
     for(String name:new LinkedHashSet<>(names)) selected.add(permission(name));
     user.getAdditionalPermissions().clear(); user.getAdditionalPermissions().addAll(selected);
@@ -103,10 +114,12 @@ public class UserRepository implements IUserRepository {
     user.setPassword(encoder.encode(dto.getPassword())); user.setLocked(Boolean.TRUE.equals(dto.getLocked()));
     user.setDisabled(Boolean.TRUE.equals(dto.getDisabled())); user.setRoles(new ArrayList<>());
     setPermissions(user,dto.getAdditionalPermissions());
+    // El usuario se guarda antes que su rol porque la fila user_role referencia al usuario.
     user=users.save(user); setRole(user,role); em.flush(); return mapper.toUserDto(user);
   }
   @Transactional
   public UserDto update(UserDto dto) {
+    // Actualización parcial: los campos que llegan en null conservan su valor actual.
     UserEntity user=account(dto.getUsername());
     String role=requestedRole(dto,false);
     if(dto.getEmail()!=null) {
@@ -149,6 +162,7 @@ public class UserRepository implements IUserRepository {
   public UserPermissionsDto permissionDetails(String username) {
     UserEntity user=users.findById(username).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,"El usuario no existe"));
     String role=mapper.roleName(user);
+    // Efectivos = heredados del rol ∪ individuales. TreeSet quita repetidos y los ordena.
     List<String> inherited=role==null ? List.of() : roles.findById(role).map(item ->
         item.getPermissions().stream().map(PermissionEntity::getName).sorted().toList()).orElse(List.of());
     List<String> additional=mapper.permissionNames(user);
