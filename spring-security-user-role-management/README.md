@@ -9,19 +9,20 @@ El diseño de los módulos y las decisiones tomadas están en
 
 ## Inicio rápido
 
-Requisitos: JDK 21 y Docker (o un PostgreSQL propio). Gradle Wrapper incluido.
+Todo con Docker, desde la raíz del repositorio: `docker compose up --build`
+(ver el [README principal](../README.md)).
+
+Para desarrollar con JDK 21:
 
 ```bash
-# Desde la raíz del repositorio: PostgreSQL con la base ya creada
-docker compose up -d
-
-# Backend (perfil dev, puerto 8050)
-cd spring-security-user-role-management
-./gradlew bootRun          # en Windows: .\gradlew.bat bootRun
+docker compose up -d postgres   # desde la raíz: PostgreSQL en localhost:5433
+./gradlew bootRun               # en Windows: .\gradlew.bat bootRun
 ```
 
 Hibernate crea las tablas al arrancar (`ddl-auto=update`). El bootstrap crea los
-roles, los permisos y la cuenta inicial `superadmin` / `SuperAdmin123!` (solo en dev).
+roles, los permisos y la cuenta `superadmin` / `SuperAdmin123!`. En dev, si la base
+no tiene pacientes, `DatosDemo` carga cuentas de cada rol, médicos, pacientes,
+ingresos y citas (`DEMO_DATA=false` lo desactiva).
 
 | Recurso | Dirección |
 | --- | --- |
@@ -50,6 +51,8 @@ En Swagger ejecuta `POST /api/auth/login`, copia el token (texto) y pégalo en
 | `APP_ZONA_HORARIA` | Zona del hospital (`America/Bogota` por defecto) | No |
 | `BOOTSTRAP_ADMIN_ENABLED`, `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Cuenta inicial (en prod desactivada por defecto) | No |
 | `PORT` | Puerto (8050 por defecto) | No |
+| `DEMO_DATA` | Carga datos de demostración en dev (`true` por defecto) | No |
+| `LOGIN_MAX_INTENTOS`, `LOGIN_BLOQUEO` | Límite de intentos de login (5 y `15m`) | No |
 
 Producción: `SPRING_PROFILES_ACTIVE=prod`. Si falta una variable obligatoria,
 la aplicación no arranca. En prod, Swagger y `show-sql` están desactivados.

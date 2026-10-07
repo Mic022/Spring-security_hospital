@@ -5,6 +5,9 @@ compilación. Se conecta a la API del backend con JWT.
 
 ## Inicio rápido
 
+Con Docker, `docker compose up --build` desde la raíz ya sirve esta carpeta en
+http://localhost:5500. Sin Docker:
+
 1. Arranca PostgreSQL y el backend (ver el [README principal](../README.md)).
 2. Sirve esta carpeta:
 
