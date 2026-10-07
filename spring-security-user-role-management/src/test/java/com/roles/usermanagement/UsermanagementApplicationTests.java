@@ -240,4 +240,25 @@ class UsermanagementApplicationTests extends ApiTestSupport {
             deleteUser("tokenuser");
         }
     }
+
+    /** Cada usuario puede cambiar su propia contraseña, demostrando que conoce la actual. */
+    @Test
+    void usersCanChangeTheirOwnPassword() throws Exception {
+        String admin = login("superadmin");
+        try {
+            createUser(admin, "selfuser", "ENFERMERO");
+            String token = login("selfuser");
+            String url = "/api/auth/password";
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Secret123\",\"passwordNueva\":\"Nueva12345\"}", null).statusCode()).isEqualTo(401);
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Incorrecta1\",\"passwordNueva\":\"Nueva12345\"}", token).statusCode()).isEqualTo(400);
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Secret123\",\"passwordNueva\":\"debil\"}", token).statusCode()).isEqualTo(400);
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Secret123\",\"passwordNueva\":\"Secret123\"}", token).statusCode()).isEqualTo(400);
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Secret123\",\"passwordNueva\":\"Nueva12345\"}", token).statusCode()).isEqualTo(204);
+            // El token anterior deja de servir y la nueva contraseña funciona.
+            assertThat(request("GET", "/api/auth/me", null, token).statusCode()).isEqualTo(401);
+            assertThat(request("POST", "/api/auth/login", "{\"username\":\"selfuser\",\"password\":\"Nueva12345\"}", null).statusCode()).isEqualTo(200);
+        } finally {
+            deleteUser("selfuser");
+        }
+    }
 }
