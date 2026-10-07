@@ -73,7 +73,7 @@ class HospitalModulesTests extends ApiTestSupport {
         long ia = crear("/api/ingresos", "{\"pacienteId\":" + a + ",\"medicoId\":" + m1 + ",\"area\":\"UCI\",\"habitacion\":\"101\",\"fechaEstimadaRecuperacion\":\"" + fecha + "\"}", admin);
         assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + a + ",\"medicoId\":" + m1 + ",\"area\":\"UCI\",\"habitacion\":\"102\"}", admin).statusCode()).isEqualTo(409);
         assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m2 + ",\"area\":\"PEDIATRIA\",\"habitacion\":\"7\"}", med1).statusCode()).isEqualTo(403);
-        crear("/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m2 + ",\"area\":\"PEDIATRIA\",\"habitacion\":\"7\"}", med2);
+        crear("/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m2 + ",\"area\":\"PEDIATRIA\",\"habitacion\":\"7\"}", admin);
         assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m2 + ",\"area\":\"OTRA\",\"habitacion\":\"7\"}", admin).statusCode()).isEqualTo(400);
         assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m2 + ",\"area\":\"UCI\",\"habitacion\":\"1\"}", enf).statusCode()).isEqualTo(403);
 
@@ -156,5 +156,20 @@ class HospitalModulesTests extends ApiTestSupport {
         var historial = json(request("GET", "/api/reportes/pacientes/" + a, null, admin)).path("historial");
         assertThat(historial.size()).isEqualTo(3);
         assertThat(historial.get(2).path("estado").asText()).isEqualTo("RECUPERADO");
+
+        // --- Un médico no puede apropiarse de un paciente ajeno creándole un ingreso ---
+        long e = crear("/api/pacientes", "{\"nombre\":\"Elena Ríos\",\"documento\":\"500\"}", rec);
+        assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + e + ",\"medicoId\":" + m1 + ",\"area\":\"UCI\",\"habitacion\":\"9\"}", med1).statusCode()).isEqualTo(403);
+        assertThat(request("GET", "/api/reportes/pacientes/" + e, null, med1).statusCode()).isEqualTo(403);
+        // Con una cita agendada por recepción, el paciente pasa a ser suyo y ya puede ingresarlo.
+        crear("/api/citas", "{\"pacienteId\":" + e + ",\"medicoId\":" + m1 + ",\"fechaHora\":\"" + manana + "T15:00:00\"}", rec);
+        crear("/api/ingresos", "{\"pacienteId\":" + e + ",\"medicoId\":" + m1 + ",\"area\":\"UCI\",\"habitacion\":\"9\"}", med1);
+        // Un paciente con ingreso abierto de otro médico: 403, sin revelar que está hospitalizado (no 409).
+        assertThat(request("POST", "/api/ingresos", "{\"pacienteId\":" + b + ",\"medicoId\":" + m1 + ",\"area\":\"UCI\",\"habitacion\":\"9\"}", med1).statusCode()).isEqualTo(403);
+    
+        // --- Un médico con permisos extra sigue limitado a sus pacientes ---
+        assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"medico1\",\"permission\":\"PACIENTE_MANAGE\"}", admin).statusCode()).isEqualTo(200);
+        assertThat(request("PUT", "/api/pacientes/" + b, "{\"nombre\":\"Cambiado\",\"documento\":\"200\"}", med1).statusCode()).isEqualTo(403);
+        assertThat(request("PUT", "/api/pacientes/" + a, "{\"nombre\":\"Ana Pérez\",\"documento\":\"100\"}", med1).statusCode()).isEqualTo(200);
     }
 }

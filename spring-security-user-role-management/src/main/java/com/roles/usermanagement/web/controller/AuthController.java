@@ -60,6 +60,28 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Credenciales invalidas o cuenta no disponible");
         }
     }
+    @PutMapping("/password")
+    @org.springframework.security.access.prepost.PreAuthorize("isAuthenticated()")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name="bearerAuth")
+    @Operation(summary="Cambiar la propia contraseña",
+            description="Exige la contraseña actual. Después hay que iniciar sesión de nuevo: los tokens anteriores dejan de servir.")
+    public ResponseEntity<String> changePassword(@RequestBody com.roles.usermanagement.domain.dto.CambioPasswordDto dto,
+                                                 java.security.Principal principal, HttpServletRequest request) {
+        // Probar contraseñas actuales con un token robado cuenta igual que los intentos de login.
+        String clave = LoginAttemptService.clave(principal.getName(), request.getRemoteAddr());
+        long minutos = attempts.minutosBloqueado(clave);
+        if (minutos > 0) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .body("Demasiados intentos fallidos. Intenta de nuevo en " + minutos + " minuto(s)");
+        }
+        if (!users.changeOwnPassword(principal.getName(), dto.passwordActual(), dto.passwordNueva())) {
+            attempts.fallo(clave);
+            return ResponseEntity.badRequest().body("La contraseña actual no es correcta");
+        }
+        attempts.exito(clave);
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping("/me")
     @org.springframework.security.access.prepost.PreAuthorize("isAuthenticated()")
     @io.swagger.v3.oas.annotations.security.SecurityRequirement(name="bearerAuth")

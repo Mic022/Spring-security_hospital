@@ -1084,6 +1084,23 @@ async function handle(action, element) {
             );
             return;
 
+        case 'change-password':
+            // Tras cambiarla, los tokens anteriores dejan de servir: se cierra la sesión
+            modal(
+                'Cambiar mi contraseña',
+                field('Contraseña actual', 'passwordActual', '', 'password', 'required autocomplete="current-password"') +
+                field('Nueva contraseña', 'passwordNueva', '', 'password', 'required minlength="8" maxlength="72" autocomplete="new-password"') +
+                '<p class="note">Mínimo 8 caracteres, con letras y números. Después tendrás que iniciar sesión de nuevo.</p>',
+                async f => {
+                    await api('/api/auth/password', { method: 'PUT', body: Object.fromEntries(f) });
+                    logout();
+                    toast('Contraseña cambiada. Inicia sesión con la nueva contraseña.');
+                    return KEEP;
+                },
+                'Cambiar contraseña'
+            );
+            return;
+
         case 'revoke-user-permission':
             return confirmAction(
                 'Retirar permiso individual',
@@ -1144,6 +1161,7 @@ $('#session-button').onclick = async () => {
                     <h3>Permisos de mi sesión</h3>
                     ${chips(state.me.effectivePermissions)}
                 </div>
+                ${button('change-password', 'Cambiar mi contraseña', '', 'secondary')}
             `,
             null
         );

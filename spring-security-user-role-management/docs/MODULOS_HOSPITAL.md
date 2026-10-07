@@ -57,6 +57,11 @@ El documento describía dos middlewares de Node. En Spring quedaron así:
 | `permitirRoles` | `@PreAuthorize` con permisos por rol (403) |
 | El médico solo ve sus pacientes | `AccesoMedico`, usado por los cinco endpoints |
 
+La restricción "solo sus pacientes" se aplica a las cuentas con el **rol MEDICO**,
+aunque reciban permisos extra. Un rol personalizado con `PACIENTE_READ` verá a
+todos los pacientes, igual que enfermería: si se crea un rol de médico distinto,
+hay que ampliar `AccesoMedico.medicoActual`.
+
 El token lleva el usuario y una huella de su contraseña (no el rol). El rol y los
 permisos se leen de la base en cada petición, así un cambio de permisos se aplica
 al instante; y si la contraseña cambia, los tokens anteriores dejan de servir.
@@ -66,6 +71,7 @@ al instante; y si la contraseña cambia, los tokens anteriores dejan de servir.
 | Tema | Decisión | Dónde cambiarlo |
 | --- | --- | --- |
 | "Sus pacientes" | Los que tienen al menos un ingreso o una cita con ese médico, también los antiguos | `PacienteRepository.esPacienteDe` y `AccesoMedico.pacienteDe` |
+| Cómo un paciente pasa a ser "suyo" | Recepción le agenda una cita (o el administrador lo ingresa). El médico no puede crear ingresos ni citas para pacientes ajenos | `IngresoService.crear`, `CitaService` |
 | Vínculo usuario–médico | `medico.username`, una cuenta MEDICO por médico | `MedicoService` |
 | Cuenta MEDICO sin médico vinculado | No ve nada (403) | `AccesoMedico.medicoActual` |
 | Cambios de estado | Se permite cualquier cambio; RECUPERADO cierra el ingreso | `IngresoService.actualizar` |

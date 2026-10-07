@@ -138,6 +138,19 @@ public class UserRepository implements IUserRepository {
     setRole(user,role); setPermissions(user,dto.getAdditionalPermissions());
     em.flush(); return mapper.toUserDto(user);
   }
+  /**
+   * El propio usuario cambia su contraseña. Devuelve false si la actual no es correcta.
+   * La nueva cumple la misma política; al cambiar, los tokens anteriores dejan de servir.
+   */
+  @Transactional
+  public boolean changeOwnPassword(String username, String current, String newPassword) {
+    UserEntity user=account(username);
+    if(current==null || !encoder.matches(current,user.getPassword())) return false;
+    validatePassword(newPassword);
+    if(encoder.matches(newPassword,user.getPassword())) throw invalid("La nueva contraseña debe ser diferente de la actual");
+    user.setPassword(encoder.encode(newPassword));
+    return true;
+  }
   @Transactional
   public UserRoleDto assignRole(UserRoleDto dto) {
     UserEntity user=account(dto.getUsername());

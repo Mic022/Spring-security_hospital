@@ -149,6 +149,7 @@ POST /api/citas      {"pacienteId":1,"medicoId":1,"fechaHora":"2026-10-07T10:00:
 | --- | --- | --- |
 | POST | `/api/auth/login` | Público |
 | GET | `/api/auth/me` | Autenticado |
+| PUT | `/api/auth/password` | Autenticado (cambia la propia contraseña; exige la actual) |
 | GET | `/api/user/all` | USER_READ |
 | POST | `/api/user/add` | USER_CREATE y ROLE_ASSIGN |
 | PUT | `/api/user/update` | USER_UPDATE (+ ROLE_ASSIGN / PERMISSION_ASSIGN según el body) |
