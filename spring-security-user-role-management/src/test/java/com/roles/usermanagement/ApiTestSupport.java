@@ -33,10 +33,10 @@ abstract class ApiTestSupport {
         return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    /** Inicia sesión con la contraseña de pruebas "secret" y devuelve el JWT. */
+    /** Inicia sesión con la contraseña de pruebas "Secret123" y devuelve el JWT. */
     String login(String username) throws Exception {
         var response = request("POST", "/api/auth/login",
-                "{\"username\":\"" + username + "\",\"password\":\"secret\"}", null);
+                "{\"username\":\"" + username + "\",\"password\":\"Secret123\"}", null);
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body().split("\\.")).hasSize(3);
         return response.body();
@@ -45,7 +45,7 @@ abstract class ApiTestSupport {
     /** Crea una cuenta con el rol indicado usando el token de un administrador. */
     void createUser(String admin, String username, String role) throws Exception {
         String body = "{\"username\":\"" + username + "\",\"email\":\"" + username + "@test.local\","
-                + "\"password\":\"secret\",\"role\":\"" + role + "\"}";
+                + "\"password\":\"Secret123\",\"role\":\"" + role + "\"}";
         assertThat(request("POST", "/api/user/add", body, admin).statusCode()).isEqualTo(200);
     }
 

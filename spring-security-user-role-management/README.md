@@ -69,6 +69,9 @@ la aplicación no arranca. En prod, Swagger y `show-sql` están desactivados.
 | Token válido sin el permiso | 403 |
 | Médico consultando un paciente ajeno | 403 |
 
+**Contraseñas:** se guardan con BCrypt y deben tener entre 8 y 72 caracteres,
+con al menos una letra y un número.
+
 **Protección contra escalada de privilegios** (`PrivilegeGuard`): nadie puede
 conceder un rol o permiso que no tiene, ni modificar una cuenta con más permisos
 que la suya. Tampoco puede eliminarse, bloquearse ni deshabilitarse a sí mismo.

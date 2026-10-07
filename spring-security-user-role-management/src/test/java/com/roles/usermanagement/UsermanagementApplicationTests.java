@@ -41,7 +41,7 @@ class UsermanagementApplicationTests extends ApiTestSupport {
                 .isEqualTo(UserRoles.Role.MEDICO.permissions().size());
 
         String hash = jdbc.queryForObject("select password from \"user\" where username='superadmin'", String.class);
-        assertThat(passwordEncoder.matches("secret", hash)).isTrue();
+        assertThat(passwordEncoder.matches("Secret123", hash)).isTrue();
         jdbc.update("update \"user\" set email='changed@test.local' where username='superadmin'");
         // Volver a ejecutar el bootstrap no cambia la cuenta existente ni duplica datos.
         bootstrap.initialize();
@@ -54,7 +54,7 @@ class UsermanagementApplicationTests extends ApiTestSupport {
                 .contains("ROLE_ADMIN", "USER_READ", "ROLE_ASSIGN", "REPORTE_READ", "ALERTA_ATENDER");
 
         assertThat(request("POST", "/api/auth/login", "{\"username\":\"superadmin\",\"password\":\"wrong\"}", null).statusCode()).isEqualTo(401);
-        assertThat(request("POST", "/api/auth/login", "{\"username\":\"unknown\",\"password\":\"secret\"}", null).statusCode()).isEqualTo(401);
+        assertThat(request("POST", "/api/auth/login", "{\"username\":\"unknown\",\"password\":\"Secret123\"}", null).statusCode()).isEqualTo(401);
         assertThat(request("POST", "/api/auth/login", "{}", null).statusCode()).isEqualTo(400);
         var token = com.auth0.jwt.JWT.decode(login("superadmin"));
         assertThat(token.getIssuer()).isEqualTo("user-management-tests");
@@ -74,7 +74,7 @@ class UsermanagementApplicationTests extends ApiTestSupport {
         assertThat(request("GET", "/api/user/all", null, token).statusCode()).isEqualTo(200);
         jdbc.update("update \"user\" set locked=true where username='superadmin'");
         try {
-            assertThat(request("POST", "/api/auth/login", "{\"username\":\"superadmin\",\"password\":\"secret\"}", null).statusCode()).isEqualTo(401);
+            assertThat(request("POST", "/api/auth/login", "{\"username\":\"superadmin\",\"password\":\"Secret123\"}", null).statusCode()).isEqualTo(401);
             assertThat(request("GET", "/api/user/all", null, token).statusCode()).isEqualTo(401);
         } finally {
             jdbc.update("update \"user\" set locked=false where username='superadmin'");
@@ -86,17 +86,17 @@ class UsermanagementApplicationTests extends ApiTestSupport {
         String admin = login("superadmin");
         try {
             // El rol es obligatorio al crear.
-            assertThat(request("POST", "/api/user/add", "{\"username\":\"norole\",\"email\":\"norole@test.local\",\"password\":\"secret\"}", admin).statusCode()).isEqualTo(400);
+            assertThat(request("POST", "/api/user/add", "{\"username\":\"norole\",\"email\":\"norole@test.local\",\"password\":\"Secret123\"}", admin).statusCode()).isEqualTo(400);
             createUser(admin, "putuser", "RECEPCION");
-            assertThat(request("POST", "/api/user/add", "{\"username\":\"putuser\",\"email\":\"x@test.local\",\"password\":\"secret\",\"role\":\"RECEPCION\"}", admin).statusCode()).isEqualTo(409);
+            assertThat(request("POST", "/api/user/add", "{\"username\":\"putuser\",\"email\":\"x@test.local\",\"password\":\"Secret123\",\"role\":\"RECEPCION\"}", admin).statusCode()).isEqualTo(409);
             assertThat(request("POST", "/api/user/assignRole", "{\"username\":\"putuser\",\"role\":\"ENFERMERO\"}", admin).statusCode()).isEqualTo(200);
-            String update = "{\"username\":\"putuser\",\"email\":\"changed@test.local\",\"password\":\"new-password\",\"role\":\"MEDICO\"}";
+            String update = "{\"username\":\"putuser\",\"email\":\"changed@test.local\",\"password\":\"NewPassword1\",\"role\":\"MEDICO\"}";
             assertThat(request("PUT", "/api/user/update", update, admin).statusCode()).isEqualTo(200);
             assertThat(jdbc.queryForObject("select count(*) from user_role where username='putuser'", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("select role from user_role where username='putuser'", String.class)).isEqualTo("MEDICO");
             String hash = jdbc.queryForObject("select password from \"user\" where username='putuser'", String.class);
-            assertThat(passwordEncoder.matches("new-password", hash)).isTrue();
-            assertThat(request("POST", "/api/auth/login", "{\"username\":\"putuser\",\"password\":\"new-password\"}", null).statusCode()).isEqualTo(200);
+            assertThat(passwordEncoder.matches("NewPassword1", hash)).isTrue();
+            assertThat(request("POST", "/api/auth/login", "{\"username\":\"putuser\",\"password\":\"NewPassword1\"}", null).statusCode()).isEqualTo(200);
             // Campos omitidos se conservan.
             assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"disabled\":true}", admin).statusCode()).isEqualTo(200);
             assertThat(jdbc.queryForObject("select password from \"user\" where username='putuser'", String.class)).isEqualTo(hash);
@@ -105,6 +105,11 @@ class UsermanagementApplicationTests extends ApiTestSupport {
             assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"email\":\"" + superEmail + "\"}", admin).statusCode()).isEqualTo(409);
             assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"role\":\"UNKNOWN\"}", admin).statusCode()).isEqualTo(400);
             assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"password\":\"\"}", admin).statusCode()).isEqualTo(400);
+            // Política de contraseñas: mínimo 8 caracteres con letras y números.
+            for (String debil : new String[]{"corta1", "solotexto", "12345678"}) {
+                assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"password\":\"" + debil + "\"}", admin).statusCode()).isEqualTo(400);
+                assertThat(request("POST", "/api/user/add", "{\"username\":\"weak\",\"email\":\"weak@test.local\",\"password\":\"" + debil + "\",\"role\":\"RECEPCION\"}", admin).statusCode()).isEqualTo(400);
+            }
             assertThat(request("GET", "/api/user/all", null, admin).body()).doesNotContain("password", "$2a$");
             assertThat(request("DELETE", "/api/user/delete/putuser", null, admin).statusCode()).isEqualTo(200);
             assertThat(request("DELETE", "/api/user/delete/putuser", null, admin).statusCode()).isEqualTo(404);
@@ -173,7 +178,7 @@ class UsermanagementApplicationTests extends ApiTestSupport {
             }
             String helper = login("helper");
             // No puede cambiar la contraseña, bloquear ni eliminar al administrador.
-            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"password\":\"hacked\"}", helper).statusCode()).isEqualTo(403);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"password\":\"Hacked123\"}", helper).statusCode()).isEqualTo(403);
             assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"locked\":true}", helper).statusCode()).isEqualTo(403);
             assertThat(request("DELETE", "/api/user/delete/superadmin", null, helper).statusCode()).isEqualTo(403);
             // No puede darse un permiso que no tiene; sí uno que ya tiene.
