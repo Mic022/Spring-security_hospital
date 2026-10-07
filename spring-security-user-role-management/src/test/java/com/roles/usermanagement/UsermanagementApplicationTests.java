@@ -187,6 +187,11 @@ class UsermanagementApplicationTests extends ApiTestSupport {
             // Nadie puede eliminarse ni bloquearse a sí mismo.
             assertThat(request("DELETE", "/api/user/delete/superadmin", null, admin).statusCode()).isEqualTo(409);
             assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"disabled\":true}", admin).statusCode()).isEqualTo(409);
+            // Nadie puede cambiar su propio rol (el admin no puede quitarse ADMIN); repetir el mismo rol sí se permite.
+            assertThat(request("POST", "/api/user/assignRole", "{\"username\":\"superadmin\",\"role\":\"ENFERMERO\"}", admin).statusCode()).isEqualTo(409);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"role\":\"ENFERMERO\"}", admin).statusCode()).isEqualTo(409);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"role\":\"ADMIN\"}", admin).statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/auth/me", null, admin).body()).contains("\"role\":\"ADMIN\"");
             // Sin token o con token inválido: 401. Con token sin permiso: 403.
             assertThat(request("GET", "/api/user/all", null, null).statusCode()).isEqualTo(401);
             assertThat(request("GET", "/api/user/all", null, "token-invalido").statusCode()).isEqualTo(401);

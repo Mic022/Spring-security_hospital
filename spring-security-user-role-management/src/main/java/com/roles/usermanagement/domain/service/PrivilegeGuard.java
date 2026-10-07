@@ -80,6 +80,17 @@ public class PrivilegeGuard {
         }
     }
 
+    /**
+     * Impide cambiar el propio rol: un ADMIN que se quitara el rol podría dejar el sistema sin administradores.
+     * Enviar el mismo rol que ya se tiene no es un cambio y se permite.
+     */
+    public void requireNotOwnRoleChange(String username, String role) {
+        if (role == null || username == null || !username.equals(currentUsername())) return;
+        if (!role.equals(users.permissionDetails(username).role())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "No puedes cambiar tu propio rol");
+        }
+    }
+
     /** Impide eliminar, bloquear o deshabilitar la propia cuenta (evita quedarse sin administrador). */
     public void requireNotSelf(String username, String message) {
         if (username != null && username.equals(currentUsername())) {
