@@ -1,0 +1,5 @@
+# Archivos que no se copian a la imagen (compilados locales y configuración del IDE)
+build/
+.gradle/
+.idea/
+*.iml

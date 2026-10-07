@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class UserSecurityService implements UserDetailsService {
-    public static final String RANDOM_ORDER = "random_order";
     public static final String ROLE_PREFIX = "ROLE_";
     private final UserRepository userRepository;
     private final RoleCrudRepository roleRepository;
@@ -29,6 +28,8 @@ public class UserSecurityService implements UserDetailsService {
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
         UserDto user = userRepository.loadUserByUsername(username);
         if (user == null) throw new UsernameNotFoundException("User " + username + " not found.");
+        // Autoridades de Spring Security: "ROLE_<rol>" (para hasRole), los permisos del rol
+        // y los permisos individuales (para hasAuthority). El Set evita repetidos.
         Set<GrantedAuthority> authorities = new LinkedHashSet<>();
         if (user.getRoles() != null) {
             user.getRoles().forEach(assignment -> {
@@ -41,6 +42,7 @@ public class UserSecurityService implements UserDetailsService {
         if (user.getAdditionalPermissions() != null) {
             user.getAdditionalPermissions().forEach(permission -> authorities.add(new SimpleGrantedAuthority(permission)));
         }
+        // password es el hash BCrypt; Spring lo compara con la contraseña del login.
         return User.builder().username(user.getUsername()).password(user.getPassword())
                 .authorities(authorities).accountLocked(Boolean.TRUE.equals(user.getLocked()))
                 .disabled(Boolean.TRUE.equals(user.getDisabled())).build();

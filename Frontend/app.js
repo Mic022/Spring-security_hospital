@@ -1,6 +1,7 @@
 'use strict';
 
 const $ = s => document.querySelector(s);
+// Escapa HTML antes de insertarlo con innerHTML: evita que un dato (p. ej. un nombre) ejecute código (XSS).
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({
     '&': '&amp;',
     '<': '&lt;',
@@ -9,14 +10,14 @@ const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({
     "'": '&#39;'
 }[c]));
 
-const money = v => new Intl.NumberFormat('es-CO', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-}).format(Number(v || 0));
+// Fecha sin hora (AAAA-MM-DD → formato local).
+// Se añade T00:00:00 para leerla en hora local; sin eso se toma como UTC y en Colombia mostraría el día anterior.
+const day = v => v ? new Date(v + 'T00:00:00').toLocaleDateString('es-CO') : '—';
 
 const date = v => v ? new Date(v).toLocaleString('es-CO') : '—';
 const path = v => encodeURIComponent(v);
 
+// sessionStorage se borra al cerrar la pestaña (el token no queda guardado); localStorage sí persiste.
 const state = {
     token: sessionStorage.getItem('nexo.token'),
     base: localStorage.getItem('nexo.base') || 'http://localhost:8050',
@@ -25,19 +26,29 @@ const state = {
     page: 0,
     rows: [],
     cache: {},
+    filters: {},
     busy: false
 };
 
 const sections = {
     home: { title: 'Inicio', icon: '⌂' },
-    customers: { title: 'Clientes', icon: '♙', prefix: 'CUSTOMER', endpoint: '/api/customers' },
-    products: { title: 'Productos', icon: '▦', prefix: 'PRODUCT', endpoint: '/api/products' },
-    sales: { title: 'Ventas', icon: '↗', prefix: 'SALE', endpoint: '/api/sales' },
+    pacientes: { title: 'Pacientes', icon: '♙', endpoint: '/api/pacientes', perms: ['PACIENTE_READ', 'PACIENTE_MANAGE', 'INGRESO_MANAGE'] },
+    citas: { title: 'Citas', icon: '▦', endpoint: '/api/citas', perms: ['CITA_READ', 'CITA_MANAGE'] },
+    alertas: { title: 'Alertas', icon: '⚑', endpoint: '/api/alertas', perms: ['ALERTA_READ'] },
+    medicos: { title: 'Médicos', icon: '✚', endpoint: '/api/medicos', perms: ['MEDICO_READ', 'MEDICO_MANAGE'] },
     users: { title: 'Usuarios', icon: '♧' },
     roles: { title: 'Roles', icon: '◈' },
     permissions: { title: 'Permisos', icon: '⚿' }
 };
 
+// Valores permitidos por el backend
+const ESTADOS = ['INGRESADO', 'EN_TRATAMIENTO', 'EN_RECUPERACION', 'RECUPERADO'];
+const AREAS = ['URGENCIAS', 'UCI', 'PEDIATRIA', 'CIRUGIA', 'MEDICINA_GENERAL', 'GINECOLOGIA'];
+const ESTADOS_CITA = ['PROGRAMADA', 'REALIZADA', 'CANCELADA'];
+const HOSPITAL = ['pacientes', 'citas', 'alertas', 'medicos'];
+const PAGED = ['pacientes', 'citas', 'alertas'];
+
+// Solo deciden qué se muestra; la seguridad real la aplica el backend en cada petición.
 const can = p => state.me?.effectivePermissions?.includes(p);
 const any = ps => ps.some(can);
 
@@ -49,8 +60,7 @@ function visible(view) {
     if (view === 'roles') return can('ROLE_MANAGE');
     if (view === 'permissions') return can('PERMISSION_MANAGE');
 
-    const p = sections[view].prefix;
-    return any([p + '_READ', p + '_CREATE', p + '_UPDATE', p + '_DELETE', p + '_CANCEL']);
+    return any(sections[view].perms);
 }
 
 function toast(message, bad = false) {
@@ -73,6 +83,7 @@ function logout() {
     $('#login-form').password.value = '';
 }
 
+// Cliente REST: añade el token, convierte la respuesta en JSON (o texto) y traduce los errores a mensajes.
 async function api(url, { method = 'GET', body, auth = true } = {}) {
     const headers = { Accept: 'application/json, text/plain' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -89,6 +100,7 @@ async function api(url, { method = 'GET', body, auth = true } = {}) {
         throw new Error('No se pudo conectar con el servidor. Revisa la URL, Spring Boot y PostgreSQL.');
     }
 
+    // El backend responde a veces JSON y a veces texto (p. ej. el token del login): si no es JSON, se deja como texto.
     const text = await response.text();
     let data = text;
     try {
@@ -96,9 +108,12 @@ async function api(url, { method = 'GET', body, auth = true } = {}) {
     } catch {}
 
     if (!response.ok) {
+        // 401 = token ausente, vencido o invalidado: se cierra la sesión. Un 403 en /me indica lo mismo.
         if (auth && (response.status === 401 || (response.status === 403 && url === '/api/auth/me'))) {
             logout();
         }
+        // Mensaje de error: el texto tal cual, o "campo: mensaje" de cada error de validación,
+        // descartando los campos genéricos de Spring (timestamp, status...).
         let error = typeof data === 'string'
             ? data
             : (data?.detail || data?.message || Object.entries(data || {})
@@ -147,6 +162,7 @@ $('#login-form').addEventListener('submit', async e => {
     $('#login-error').textContent = '';
 
     try {
+        // Quita las barras finales ("http://x:8050/" → "http://x:8050"); new URL() falla si la dirección no es válida.
         const base = f.base.value.trim().replace(/\/+$/, '');
         const u = new URL(base);
         if (!['http:', 'https:'].includes(u.protocol)) {
@@ -176,6 +192,7 @@ $('#login-form').addEventListener('submit', async e => {
 
 $('#logout').onclick = logout;
 $('#menu-toggle').onclick = () => $('#sidebar').classList.toggle('open');
+// Un solo listener para todo el menú: closest() encuentra el botón aunque se pulse su icono.
 $('#navigation').onclick = e => {
     const b = e.target.closest('[data-nav]');
     if (b) navigate(b.dataset.nav);
@@ -243,24 +260,23 @@ async function render() {
     let rows = [];
     let read = false;
 
-    if (['customers', 'products', 'sales'].includes(view)) {
-        read = can(conf.prefix + '_READ');
+    if (HOSPITAL.includes(view)) {
+        // Permiso de consulta de cada pantalla
+        read = can({ pacientes: 'PACIENTE_READ', citas: 'CITA_READ', alertas: 'ALERTA_READ', medicos: 'MEDICO_READ' }[view]);
 
-        if (can(conf.prefix + '_CREATE')) {
-            actions = button('create', '＋ ' + (view === 'sales' ? 'Nueva venta' : view === 'products' ? 'Nuevo producto' : 'Nuevo cliente')) + actions;
-        }
-        if (!read && view !== 'sales' && can(conf.prefix + '_UPDATE')) {
-            actions += button('edit-business-id', 'Editar por ID', '', 'secondary');
-        }
-        if (!read && view !== 'sales' && can(conf.prefix + '_DELETE')) {
-            actions += button('deactivate-business-id', 'Desactivar por ID', '', 'secondary');
-        }
-        if (!read && view === 'sales' && can('SALE_CANCEL')) {
-            actions += button('cancel-sale-id', 'Anular por ID', '', 'secondary');
-        }
+        if (view === 'pacientes' && can('PACIENTE_MANAGE')) actions = button('create', '＋ Nuevo paciente') + actions;
+        if (view === 'pacientes' && can('INGRESO_MANAGE')) actions += button('ingreso-new', 'Nuevo ingreso', '', 'secondary');
+        if (view === 'pacientes' && !read && can('PACIENTE_MANAGE')) actions += button('find-document', 'Buscar por documento', '', 'secondary');
+        if (view === 'citas' && can('CITA_MANAGE')) actions = button('create', '＋ Nueva cita') + actions;
+        if (view === 'medicos' && can('MEDICO_MANAGE')) actions = button('create', '＋ Nuevo médico') + actions;
 
-        if (read) {
-            const result = await api(conf.endpoint + `?page=${state.page}&size=20`);
+        if (read && view === 'medicos') {
+            rows = await api(conf.endpoint);
+        } else if (read) {
+            // Los filtros guardados se envían como parámetros opcionales de la URL.
+            // URLSearchParams arma "?estado=...&page=0&size=20" y codifica los caracteres especiales.
+            const query = new URLSearchParams({ ...clean(state.filters[view]), page: state.page, size: 20 });
+            const result = await api(conf.endpoint + '?' + query);
             rows = result.content || [];
             state.total = result.totalElements || 0;
             state.pages = result.totalPages || 0;
@@ -290,9 +306,10 @@ async function render() {
     state.rows = rows;
 
     const intro = {
-        customers: 'Organiza tus relaciones comerciales.',
-        products: 'Tu catálogo, precios y existencias al día.',
-        sales: 'Cada operación, con su detalle e historial.',
+        pacientes: 'Busca pacientes con cualquier combinación de filtros y consulta su reporte.',
+        citas: 'Agenda del hospital por fecha y médico.',
+        alertas: 'Avisos automáticos por cambios de estado, citas y recuperaciones.',
+        medicos: 'Directorio de médicos y su cuenta de acceso.',
         users: 'Cuentas, estados y accesos de tu equipo.',
         roles: 'Un rol por usuario. Capacidades compartidas por equipo.',
         permissions: 'El catálogo de capacidades de tu aplicación.'
@@ -301,46 +318,116 @@ async function render() {
     $('#content').innerHTML = heading(conf.title, intro[view], actions) + (
         !read
             ? '<div class="panel empty">Puedes realizar las acciones habilitadas arriba. Tu cuenta no tiene permiso para consultar este listado.</div>'
-            : table(view, rows)
+            : (await filtersPanel(view)) + table(view, rows)
     );
 }
 
+// Quita los filtros vacíos antes de enviarlos
+const clean = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v !== '' && v != null));
+
+// Lista de médicos para los selectores (se guarda en caché hasta el siguiente cambio)
+async function medicoList() {
+    if (!can('MEDICO_READ')) return [];
+    state.cache.medicos = state.cache.medicos || await api('/api/medicos');
+    return state.cache.medicos;
+}
+
+// Selector con opción vacía; values puede ser una lista de textos o de [valor, etiqueta]
+function select(name, label, values, current = '', empty = 'Todos', extra = '') {
+    return `
+        <label>
+            ${label}
+            <select name="${name}" ${extra}>
+                ${empty === null ? '' : `<option value="">${empty}</option>`}
+                ${values.map(v => {
+                    const [value, text] = Array.isArray(v) ? v : [v, v];
+                    return `<option value="${esc(value)}" ${String(current ?? '') === String(value) ? 'selected' : ''}>${esc(text)}</option>`;
+                }).join('')}
+            </select>
+        </label>
+    `;
+}
+
+// Panel del módulo de filtros: cada campo es un parámetro opcional del backend
+async function filtersPanel(view) {
+    const f = state.filters[view] || {};
+    const medicos = ['pacientes', 'citas'].includes(view) ? (await medicoList()).map(m => [m.id, m.nombre]) : [];
+    // Si la cuenta no puede listar médicos, se pide el ID a mano en lugar del desplegable.
+    const medico = medicos.length ? select('medico', 'Médico', medicos, f.medico) : field('ID del médico', 'medico', f.medico, 'number', 'min="1"');
+    let body = '';
+
+    if (view === 'pacientes') {
+        body = field('Nombre', 'nombre', f.nombre) +
+            select('estado', 'Estado', ESTADOS, f.estado) +
+            select('area', 'Área', AREAS, f.area) + medico +
+            field('Ingreso desde', 'ingresoDesde', f.ingresoDesde, 'date') +
+            field('Ingreso hasta', 'ingresoHasta', f.ingresoHasta, 'date') +
+            field('Recuperación hasta', 'recuperacionHasta', f.recuperacionHasta, 'date');
+    }
+    if (view === 'citas') body = field('Fecha', 'fecha', f.fecha, 'date') + medico;
+    if (view === 'alertas') body = select('estado', 'Estado', ['PENDIENTE', 'ATENDIDA'], f.estado);
+    if (!body) return '';
+
+    return `
+        <form id="filters" class="panel filters">
+            ${body}
+            <div class="toolbar">
+                ${button('apply-filters', 'Filtrar')}
+                ${button('clear-filters', 'Limpiar', '', 'secondary')}
+            </div>
+        </form>
+    `;
+}
+
 function table(view, rows) {
+    // cells(fila, índice) devuelve el HTML de cada columna. Los botones guardan el índice de la fila
+    // (data-index) para que el manejador de acciones sepa sobre qué registro actuar.
     let headers;
     let cells;
     const action = (name, label, i, cls = 'link-button') => button(name, label, `data-index="${i}"`, cls);
 
-    if (view === 'customers') {
-        headers = ['Cliente', 'Contacto', 'Estado', 'Acciones'];
+    if (view === 'pacientes') {
+        headers = ['Paciente', 'Ingreso actual', 'Estado', 'Acciones'];
+        cells = (r, i) => {
+            const ing = r.ultimoIngreso;
+            const abierto = ing && ing.estado !== 'RECUPERADO'; // con ingreso abierto se actualiza; si no, se puede ingresar
+            return [
+                `<span class="cell-title">${esc(r.nombre)}</span><small class="cell-sub">Doc. ${esc(r.documento)} · #${r.id}</small>`,
+                ing ? `${esc(ing.area)} · Hab. ${esc(ing.habitacion)}<small class="cell-sub">${esc(ing.medicoNombre)} · ${date(ing.fechaIngreso)}</small>` : '<span class="muted">Sin ingresos</span>',
+                ing ? `<span class="badge ${abierto ? '' : 'off'}">${esc(ing.estado)}</span><small class="cell-sub">Recuperación: ${day(ing.fechaEstimadaRecuperacion)}</small>` : '—',
+                (can('REPORTE_READ') ? action('reporte', 'Reporte', i) : '') +
+                (abierto && can('INGRESO_MANAGE') ? action('ingreso-edit', 'Actualizar ingreso', i) : '') +
+                (!abierto && can('INGRESO_MANAGE') ? action('ingreso-new', 'Ingresar', i) : '') +
+                (can('PACIENTE_MANAGE') ? action('edit', 'Editar', i) : '')
+            ];
+        };
+    }
+    if (view === 'citas') {
+        headers = ['Paciente', 'Médico', 'Fecha', 'Estado', 'Acciones'];
         cells = (r, i) => [
-            `<span class="cell-title">${esc(r.name)}</span><small class="cell-sub">Cliente #${r.id}</small>`,
-            `${esc(r.email)}<small class="cell-sub">${esc(r.phone || 'Sin teléfono')}</small>`,
-            badge(r.active),
-            (r.active && can('CUSTOMER_UPDATE') ? action('edit', 'Editar', i) : '') +
-            (r.active && can('CUSTOMER_DELETE') ? action('deactivate', 'Desactivar', i) : '')
+            `<span class="cell-title">${esc(r.pacienteNombre)}</span><small class="cell-sub">${esc(r.motivo || 'Sin motivo')}</small>`,
+            esc(r.medicoNombre),
+            date(r.fechaHora),
+            `<span class="badge ${r.estado === 'PROGRAMADA' ? '' : 'off'}">${esc(r.estado)}</span>`,
+            can('CITA_MANAGE') ? action('edit', 'Editar', i) : '—'
         ];
     }
-    if (view === 'products') {
-        headers = ['Producto', 'Precio', 'Existencias', 'Estado', 'Acciones'];
+    if (view === 'alertas') {
+        headers = ['Alerta', 'Fecha', 'Estado', 'Acciones'];
         cells = (r, i) => [
-            `<span class="cell-title">${esc(r.name)}</span><small class="cell-sub">${esc(r.sku)}</small>`,
-            money(r.price),
-            r.stock,
-            badge(r.active),
-            (r.active && can('PRODUCT_UPDATE') ? action('edit', 'Editar', i) : '') +
-            (r.active && can('PRODUCT_DELETE') ? action('deactivate', 'Desactivar', i) : '')
+            `<span class="cell-title">${esc(r.tipo)} · ${esc(r.pacienteNombre)}</span><small class="cell-sub">${esc(r.mensaje)}</small>`,
+            date(r.fecha),
+            `<span class="badge ${r.estado === 'PENDIENTE' ? '' : 'off'}">${esc(r.estado)}</span>` + (r.usernameAtiende ? `<small class="cell-sub">${esc(r.usernameAtiende)}</small>` : ''),
+            r.estado === 'PENDIENTE' && can('ALERTA_ATENDER') ? action('atender', 'Marcar atendida', i) : '—'
         ];
     }
-    if (view === 'sales') {
-        headers = ['Venta', 'Cliente', 'Fecha', 'Total', 'Estado', 'Acciones'];
+    if (view === 'medicos') {
+        headers = ['Médico', 'Especialidad', 'Cuenta', 'Acciones'];
         cells = (r, i) => [
-            `<span class="cell-title">#${r.id}</span><small class="cell-sub">${esc(r.createdBy)}</small>`,
-            esc(r.customerName),
-            date(r.createdAt),
-            money(r.total),
-            `<span class="badge ${r.cancelled ? 'off' : ''}">${r.cancelled ? 'Anulada' : 'Registrada'}</span>`,
-            action('sale-detail', 'Ver detalle', i) +
-            (!r.cancelled && can('SALE_CANCEL') ? action('cancel-sale', 'Anular', i) : '')
+            `<span class="cell-title">${esc(r.nombre)}</span><small class="cell-sub">#${r.id}</small>`,
+            esc(r.especialidad),
+            r.username ? esc(r.username) : '<span class="muted">Sin cuenta</span>',
+            can('MEDICO_MANAGE') ? action('edit', 'Editar', i) : '—'
         ];
     }
     if (view === 'users') {
@@ -372,7 +459,7 @@ function table(view, rows) {
         ];
     }
 
-    const paging = ['customers', 'products', 'sales'].includes(view);
+    const paging = PAGED.includes(view);
 
     return `
         <section class="panel">
@@ -416,11 +503,12 @@ function table(view, rows) {
 
 async function dashboard() {
     const first = state.me.username;
-    const metrics = await Promise.all(['customers', 'products', 'sales'].map(async key => ({
+    // Totales de cada módulo; en alertas se cuentan solo las pendientes
+    // size=1: solo interesa totalElements de la página, no los registros. Las tres peticiones van en paralelo (Promise.all).
+    const metricUrls = { pacientes: ['PACIENTE_READ', '/api/pacientes?size=1'], citas: ['CITA_READ', '/api/citas?size=1'], alertas: ['ALERTA_READ', '/api/alertas?estado=PENDIENTE&size=1'] };
+    const metrics = await Promise.all(Object.entries(metricUrls).map(async ([key, [perm, url]]) => ({
         key,
-        total: can(sections[key].prefix + '_READ')
-            ? (await api(sections[key].endpoint + '?size=1')).totalElements
-            : null
+        total: can(perm) ? (await api(url)).totalElements : null
     })));
 
     const links = Object.entries(sections).filter(([key]) => key !== 'home' && visible(key));
@@ -433,8 +521,8 @@ async function dashboard() {
         <div class="hero">
             <div>
                 <span class="eyebrow">UN ESPACIO PARA TU EQUIPO</span>
-                <h2>La gestión empieza con una buena conexión.</h2>
-                <p>Consulta tus módulos, registra una operación o administra los accesos. Todo desde tu espacio de trabajo.</p>
+                <h2>Pacientes, citas y alertas en un solo lugar.</h2>
+                <p>Consulta el estado de los pacientes, atiende las alertas o administra los accesos. Todo desde tu espacio de trabajo.</p>
             </div>
             <span class="hero-mark">◈</span>
         </div>
@@ -444,7 +532,7 @@ async function dashboard() {
                     <span class="card-icon">${sections[key].icon}</span>
                     <div>
                         <h3>${sections[key].title}</h3>
-                        <p>${total === null ? 'Sin acceso al listado' : 'Registros en tu espacio'}</p>
+                        <p>${total === null ? 'Sin acceso al listado' : key === 'alertas' ? 'Alertas pendientes' : 'Registros visibles para ti'}</p>
                     </div>
                     <div class="metric">${total ?? '—'}</div>
                     ${visible(key) ? button('go', 'Abrir módulo →', `data-view="${key}"`, 'link-button') : ''}
@@ -469,6 +557,8 @@ async function dashboard() {
 }
 
 let modalSubmit = null;
+// Si el submit devuelve KEEP, el modal sigue abierto (p. ej. buscar y luego editar)
+const KEEP = Symbol('keep');
 
 function modal(title, body, onSubmit, label = 'Guardar') {
     const f = $('#modal-form');
@@ -485,6 +575,8 @@ function modal(title, body, onSubmit, label = 'Guardar') {
 
 $('#modal-close').onclick = $('#modal-cancel').onclick = () => $('#modal').close();
 
+// Cierra el modal al hacer clic fuera del cuadro: el fondo oscuro también es el <dialog>,
+// así que se comprueba si el clic cayó fuera de su rectángulo visible.
 $('#modal').addEventListener('click', e => {
     if (e.target === $('#modal')) {
         const rect = e.target.getBoundingClientRect();
@@ -504,8 +596,9 @@ $('#modal-form').onsubmit = async e => {
     $('#modal-error').textContent = '';
 
     try {
-        await submit(new FormData(e.currentTarget));
+        if (await submit(new FormData(e.currentTarget)) === KEEP) return;
         $('#modal').close();
+        // Tras guardar se vacía la caché y se recargan los permisos propios (el cambio pudo afectar a esta cuenta).
         state.cache = {};
         await refreshMe();
         await navigate(state.view, state.page);
@@ -537,6 +630,7 @@ async function options(url) {
     return await api(url);
 }
 
+// Desplegable de roles o permisos si la cuenta puede consultar el catálogo; si no, campo de texto libre.
 async function picker(name, label, kind, current = '') {
     let values = [];
     if (kind === 'role' && can('ROLE_MANAGE')) {
@@ -559,7 +653,7 @@ async function picker(name, label, kind, current = '') {
         `;
     }
 
-    return field(label, name, current || (kind === 'role' ? 'CUSTOMER' : ''), 'text', 'required maxlength="50"');
+    return field(label, name, current || '', 'text', 'required maxlength="50"');
 }
 
 async function entityForm(row, askId = false) {
@@ -568,23 +662,35 @@ async function entityForm(row, askId = false) {
     row = row || {};
     let body = '';
 
-    if (view === 'customers') {
-        body = field('Nombre', 'name', row.name, 'text', 'required maxlength="150"') + `
+    if (view === 'pacientes') {
+        body = field('Nombre completo', 'nombre', row.nombre, 'text', 'required maxlength="150"') + `
             <div class="fields">
-                ${field('Correo', 'email', row.email, 'email', 'required maxlength="200"')}
-                ${field('Teléfono', 'phone', row.phone, 'tel', 'maxlength="30"')}
+                ${field('Documento', 'documento', row.documento, 'text', 'required maxlength="30"')}
+                ${field('Teléfono', 'telefono', row.telefono, 'tel', 'maxlength="30"')}
             </div>
-        `;
+        ` + field('Fecha de nacimiento', 'fechaNacimiento', row.fechaNacimiento, 'date');
     }
 
-    if (view === 'products') {
-        body = field('Nombre', 'name', row.name, 'text', 'required maxlength="150"') +
-            field('Código SKU', 'sku', row.sku, 'text', 'required maxlength="50"') + `
-            <div class="fields">
-                ${field('Precio', 'price', row.price ?? '', 'number', 'required min="0.01" step="0.01"')}
-                ${field('Existencias', 'stock', row.stock ?? 0, 'number', 'required min="0" max="2147483647" step="1"')}
-            </div>
-        `;
+    if (view === 'medicos') {
+        body = field('Nombre', 'nombre', row.nombre, 'text', 'required maxlength="150"') +
+            field('Especialidad', 'especialidad', row.especialidad, 'text', 'required maxlength="100"') +
+            field('Cuenta de acceso (opcional)', 'username', row.username, 'text', 'maxlength="50"') +
+            '<p class="note">La cuenta debe tener el rol MEDICO. Con ella el médico verá solo a sus pacientes.</p>';
+    }
+
+    if (view === 'citas') {
+        const medicos = (await medicoList()).map(m => [m.id, m.nombre]);
+        body = (edit
+            ? `<p class="note">Paciente: <b>${esc(row.pacienteNombre)}</b></p><input type="hidden" name="pacienteId" value="${row.pacienteId}">`
+            : field('Documento del paciente', 'documento', '', 'text', 'required maxlength="30"')) +
+            (medicos.length
+                ? select('medicoId', 'Médico', medicos, row.medicoId, 'Selecciona un médico', 'required')
+                : field('ID del médico', 'medicoId', row.medicoId, 'number', 'required min="1"')) +
+            // datetime-local solo acepta "AAAA-MM-DDTHH:mm": se recortan segundos y fracciones.
+            field('Fecha y hora', 'fechaHora', (row.fechaHora || '').slice(0, 16), 'datetime-local', 'required') +
+            field('Motivo', 'motivo', row.motivo, 'text', 'maxlength="255"') +
+            (edit ? select('estado', 'Estado', ESTADOS_CITA, row.estado, null) : '') +
+            '<p class="note">Agendar o modificar una cita genera una alerta.</p>';
     }
 
     if (view === 'users') {
@@ -631,21 +737,31 @@ async function entityForm(row, askId = false) {
     }
 
     modal((edit ? 'Editar ' : 'Nuevo ') + ({
-        customers: 'cliente',
-        products: 'producto',
+        pacientes: 'paciente',
+        medicos: 'médico',
+        citas: 'cita',
         users: 'usuario',
         roles: 'rol',
         permissions: 'permiso'
     }[view]), body, async f => {
+        // Object.fromEntries convierte el FormData en un objeto { nombreDelCampo: valor } listo para enviar como JSON.
         let data = Object.fromEntries(f);
         const recordId = askId ? data.recordId : row.id;
         delete data.recordId;
 
-        if (view === 'products') {
-            data.price = Number(data.price);
-            data.stock = Number(data.stock);
+        if (HOSPITAL.includes(view)) {
+            // Los campos vacíos se envían como null
+            for (const k of Object.keys(data)) if (data[k] === '') data[k] = null;
+        }
+        if (view === 'citas') {
+            // El formulario pide el documento; el backend espera el id del paciente.
+            if (!edit) data.pacienteId = await pacienteId(data.documento);
+            delete data.documento;
+            data.pacienteId = Number(data.pacienteId);
+            data.medicoId = Number(data.medicoId);
         }
         if (view === 'users') {
+            // Un checkbox sin marcar no aparece en el FormData: has() lo convierte en true/false.
             data.locked = f.has('locked');
             data.disabled = f.has('disabled');
             if (edit && !data.password) delete data.password;
@@ -654,6 +770,7 @@ async function entityForm(row, askId = false) {
             data.permissions = f.getAll('permissions');
         }
 
+        // Usuarios, roles y permisos tienen rutas propias; los módulos del hospital usan endpoint y endpoint/{id}.
         const url = view === 'users'
             ? (edit ? '/api/user/update' : '/api/user/add')
             : view === 'roles'
@@ -736,152 +853,105 @@ async function rolePermissions(row) {
                 ${chips(row.permissions)}
             </div>
         `,
+        // La operación elegida es el método HTTP: PUT agrega el permiso al rol y DELETE lo retira.
         f => api(`/api/roles/${path(row.name)}/permissions/${path(f.get('permission'))}`, { method: f.get('operation') })
     );
 }
 
-async function allPages(endpoint) {
-    const out = [];
-    for (let page = 0; ; page++) {
-        const d = await api(`${endpoint}?page=${page}&size=100`);
-        out.push(...d.content);
-        if (page + 1 >= d.totalPages) break;
-        if (page >= 99) {
-            throw new Error('Hay demasiados registros para este selector. Usa los identificadores manualmente.');
-        }
-    }
-    return out;
+// Id del paciente a partir de su documento
+const pacienteId = async documento => (await api('/api/pacientes/documento/' + path(String(documento).trim()))).id;
+
+// Selector de médico, o campo de ID si la cuenta no puede listar médicos
+async function medicoField(name, label, current = '') {
+    const medicos = (await medicoList()).map(m => [m.id, m.nombre]);
+    return medicos.length
+        ? select(name, label, medicos, current, current ? null : 'Selecciona un médico', 'required')
+        : field('ID del ' + label.toLowerCase(), name, current, 'number', 'required min="1"');
 }
 
-async function saleForm() {
-    const customers = can('CUSTOMER_READ') ? (await allPages('/api/customers')).filter(r => r.active) : [];
-    const products = can('PRODUCT_READ') ? (await allPages('/api/products')).filter(r => r.active) : [];
-
-    const customer = customers.length
-        ? `
-            <label>
-                Cliente
-                <select name="customerId" required>
-                    <option value="">Selecciona un cliente</option>
-                    ${customers.map(c => `<option value="${c.id}">${esc(c.name)} · #${c.id}</option>`).join('')}
-                </select>
-            </label>
-        `
-        : field('Identificador del cliente', 'customerId', '', 'number', 'required min="1" step="1"');
-
+// Nuevo ingreso: desde la fila del paciente o indicando su documento
+async function ingresoForm(row) {
     modal(
-        'Nueva venta',
-        customer +
-        '<p class="note">El servidor calcula los precios y valida el inventario. Los importes mostrados son una estimación.</p>' +
-        '<label>Productos de la venta</label>' +
-        '<div id="sale-lines"></div>' +
-        button('add-line', '＋ Agregar producto', '', 'secondary') +
-        '<div class="totals"><span>Total estimado</span><b id="sale-total">—</b></div>',
-        async f => {
-            const items = [...$('#sale-lines').children].map(line => ({
-                productId: Number(line.querySelector('[name=productId]').value),
-                quantity: Number(line.querySelector('[name=quantity]').value)
-            }));
-
-            if (!items.length) throw new Error('Agrega al menos un producto.');
-            if (new Set(items.map(i => i.productId)).size !== items.length) {
-                throw new Error('No repitas productos: consolida su cantidad.');
+        'Nuevo ingreso',
+        (row ? `<p class="note">Paciente: <b>${esc(row.nombre)}</b></p>` : field('Documento del paciente', 'documento', '', 'text', 'required maxlength="30"')) +
+        await medicoField('medicoId', 'Médico responsable') + `
+        <div class="fields">
+            ${select('area', 'Área', AREAS, '', 'Selecciona un área', 'required')}
+            ${field('Habitación', 'habitacion', '', 'text', 'required maxlength="20"')}
+        </div>
+        ` + field('Fecha estimada de recuperación', 'fechaEstimadaRecuperacion', '', 'date') +
+        '<p class="note">El ingreso empieza en estado INGRESADO. Un paciente solo puede tener un ingreso abierto.</p>',
+        async f => api('/api/ingresos', {
+            method: 'POST',
+            body: {
+                pacienteId: row ? row.id : await pacienteId(f.get('documento')),
+                medicoId: Number(f.get('medicoId')),
+                area: f.get('area'),
+                habitacion: f.get('habitacion'),
+                fechaEstimadaRecuperacion: f.get('fechaEstimadaRecuperacion') || null
             }
-
-            await api('/api/sales', {
-                method: 'POST',
-                body: {
-                    customerId: Number(f.get('customerId')),
-                    items
-                }
-            });
-        },
-        'Registrar venta'
+        }),
+        'Registrar ingreso'
     );
-
-    state.cache.saleProducts = products;
-    addSaleLine();
 }
 
-function addSaleLine() {
-    const ps = state.cache.saleProducts || [];
-    const line = document.createElement('div');
-    line.className = 'sale-line';
-
-    line.innerHTML = (
-        ps.length
-            ? `
-                <select name="productId" aria-label="Producto" required>
-                    <option value="">Selecciona un producto</option>
-                    ${ps.map(p => `<option value="${p.id}">${esc(p.name)} · ${money(p.price)} · stock ${p.stock}</option>`).join('')}
-                </select>
-            `
-            : '<input name="productId" aria-label="ID de producto" placeholder="ID de producto" type="number" required min="1" step="1">'
-    ) +
-    '<input name="quantity" aria-label="Cantidad" type="number" value="1" min="1" max="1000000" step="1" required>' +
-    button('remove-line', '×', '', 'icon-button');
-
-    $('#sale-lines').append(line);
-    saleEstimate();
-}
-
-function saleEstimate() {
-    if (!$('#sale-total')) return;
-    let total = 0;
-    let unknown = false;
-
-    for (const line of $('#sale-lines').children) {
-        const p = (state.cache.saleProducts || []).find(p => p.id === Number(line.querySelector('[name=productId]').value));
-        if (!p) {
-            unknown = true;
-            continue;
-        }
-        total += Math.round(Number(p.price) * 100) * Number(line.querySelector('[name=quantity]').value);
-    }
-
-    $('#sale-total').textContent = unknown ? 'Por calcular' : money(total/100);
-}
-
-async function saleDetails(row) {
-    const d = await api('/api/sales/' + row.id);
+// Cambiar estado, médico, área, habitación o fecha estimada del ingreso abierto
+async function ingresoUpdate(row) {
+    const ing = row.ultimoIngreso;
     modal(
-        'Venta #' + d.id,
-        `
-            <div class="info-row"><span>Cliente</span><b>${esc(d.customerName)}</b></div>
-            <div class="info-row"><span>Registrada por</span><b>${esc(d.createdBy)}</b></div>
-            <div class="info-row"><span>Fecha</span><b>${esc(date(d.createdAt))}</b></div>
-            <div class="info-row"><span>Estado</span><b>${d.cancelled ? 'Anulada' : 'Registrada'}</b></div>
-            ${d.cancelled ? `<div class="info-row"><span>Anulación</span><b>${esc(d.cancelledBy)} ·${esc(date(d.cancelledAt))}</b></div>` : ''}
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Producto</th>
-                            <th>Cantidad</th>
-                            <th>Precio</th>
-                            <th>Subtotal</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${d.items.map(i => `
-                            <tr>
-                                <td>${esc(i.productName)}</td>
-                                <td>${i.quantity}</td>
-                                <td>${money(i.unitPrice)}</td>
-                                <td>${money(i.subtotal)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
-            <div class="totals">
-                <span>Total registrado</span><b>${money(d.total)}</b>
-            </div>
+        'Actualizar ingreso de ' + row.nombre,
+        select('estado', 'Estado', ESTADOS, ing.estado, null) +
+        await medicoField('medicoId', 'Médico responsable', ing.medicoId) + `
+        <div class="fields">
+            ${select('area', 'Área', AREAS, ing.area, null)}
+            ${field('Habitación', 'habitacion', ing.habitacion, 'text', 'required maxlength="20"')}
+        </div>
+        ` + field('Fecha estimada de recuperación', 'fechaEstimadaRecuperacion', ing.fechaEstimadaRecuperacion, 'date') +
+        '<p class="note">Los cambios quedan en el historial y generan una alerta. RECUPERADO cierra el ingreso.</p>',
+        f => api('/api/ingresos/' + ing.id, {
+            method: 'PUT',
+            body: {
+                estado: f.get('estado'),
+                medicoId: Number(f.get('medicoId')),
+                area: f.get('area'),
+                habitacion: f.get('habitacion'),
+                fechaEstimadaRecuperacion: f.get('fechaEstimadaRecuperacion') || null
+            }
+        })
+    );
+}
+
+// Reporte del paciente (módulo de reportes): se calcula en el backend al pedirlo
+async function reporte(row) {
+    const r = await api('/api/reportes/pacientes/' + row.id);
+    const info = (label, value) => `<div class="info-row"><span>${label}</span><b>${esc(value ?? '—')}</b></div>`;
+    modal(
+        'Reporte de ' + r.nombre,
+        info('Documento', r.documento) +
+        (r.fechaIngreso
+            ? info('Fecha de ingreso', date(r.fechaIngreso)) +
+              info('Médico responsable', r.medicoResponsable) +
+              info('Área y habitación', r.area + ' · ' + r.habitacion) +
+              info('Estado', r.estado) +
+              info('Recuperación estimada', day(r.fechaEstimadaRecuperacion)) +
+              info('Días transcurridos', r.diasTranscurridos) +
+              info('Días restantes', r.diasRestantes)
+            : '<p class="note">El paciente no tiene ingresos.</p>') + `
+        <div class="permission-group">
+            <h3>Citas</h3>
+            ${r.citas.map(c => `<div class="info-row"><span>${esc(date(c.fechaHora))} · ${esc(c.medicoNombre)}</span><b>${esc(c.estado)}</b></div>`).join('') || '<small>Sin citas.</small>'}
+        </div>
+        <div class="permission-group">
+            <h3>Historial de estados</h3>
+            ${r.historial.map(h => `<div class="info-row"><span>${esc(date(h.fecha))} · ${esc(h.detalle)}</span><b>${esc(h.username)}</b></div>`).join('') || '<small>Sin cambios.</small>'}
+        </div>
         `,
         null
     );
 }
 
+// Ejecuta la acción del botón pulsado (atributo data-action). row es el registro de la fila,
+// recuperado por su data-index; en botones fuera de la tabla queda undefined.
 async function handle(action, element) {
     const row = state.rows[Number(element.dataset.index)];
 
@@ -900,33 +970,10 @@ async function handle(action, element) {
             return navigate(state.view, state.page + 1);
 
         case 'create':
-            return state.view === 'sales' ? saleForm() : entityForm();
+            return entityForm();
 
         case 'edit':
             return entityForm(row);
-
-        case 'edit-business-id':
-            return entityForm({}, true);
-
-        case 'deactivate-business-id':
-            modal(
-                'Desactivar registro',
-                field('Identificador', 'id', '', 'number', 'required min="1" step="1"') +
-                '<p class="note">El registro quedará inactivo. Se conservará el historial.</p>',
-                f => api(sections[state.view].endpoint + '/' + path(f.get('id')), { method: 'DELETE' }),
-                'Desactivar'
-            );
-            return;
-
-        case 'cancel-sale-id':
-            modal(
-                'Anular venta',
-                field('Identificador de venta', 'id', '', 'number', 'required min="1" step="1"') +
-                '<p class="note">Anular repone las existencias y conserva el detalle original.</p>',
-                f => api('/api/sales/' + path(f.get('id')) + '/cancel', { method: 'POST' }),
-                'Anular venta'
-            );
-            return;
 
         case 'revoke-permission-id':
             modal(
@@ -981,13 +1028,6 @@ async function handle(action, element) {
             );
             return;
 
-        case 'deactivate':
-            return confirmAction(
-                'Desactivar registro',
-                `¿Desactivar ${row.name}? Las ventas históricas se conservarán.`,
-                () => api(sections[state.view].endpoint + '/' + row.id, { method: 'DELETE' })
-            );
-
         case 'delete-user':
             return confirmAction(
                 'Eliminar usuario',
@@ -1007,25 +1047,59 @@ async function handle(action, element) {
         case 'role-permission':
             return rolePermissions(row);
 
-        case 'cancel-sale':
+        case 'apply-filters':
+            state.filters[state.view] = Object.fromEntries(new FormData($('#filters')));
+            return navigate(state.view, 0);
+
+        case 'clear-filters':
+            state.filters[state.view] = {};
+            return navigate(state.view, 0);
+
+        case 'reporte':
+            return reporte(row);
+
+        case 'ingreso-new':
+            return ingresoForm(row);
+
+        case 'ingreso-edit':
+            return ingresoUpdate(row);
+
+        case 'atender':
             return confirmAction(
-                'Anular venta',
-                `¿Anular la venta #${row.id}? Sus existencias regresarán al inventario.`,
-                () => api('/api/sales/' + row.id + '/cancel', { method: 'POST' })
+                'Marcar alerta como atendida',
+                `${row.tipo} · ${row.pacienteNombre}: ${row.mensaje}`,
+                () => api('/api/alertas/' + row.id, { method: 'PUT' })
             );
 
-        case 'sale-detail':
-            return saleDetails(row);
+        case 'find-document':
+            // Recepción no consulta el listado: busca por documento y edita
+            modal(
+                'Buscar paciente',
+                field('Documento', 'documento', '', 'text', 'required maxlength="30"'),
+                async f => {
+                    await entityForm(await api('/api/pacientes/documento/' + path(f.get('documento').trim())));
+                    return KEEP;
+                },
+                'Buscar'
+            );
+            return;
 
-        case 'add-line':
-            if ($('#sale-lines').children.length >= 100) {
-                throw new Error('Máximo 100 productos por venta.');
-            }
-            return addSaleLine();
-
-        case 'remove-line':
-            element.closest('.sale-line').remove();
-            return saleEstimate();
+        case 'change-password':
+            // Tras cambiarla, los tokens anteriores dejan de servir: se cierra la sesión
+            modal(
+                'Cambiar mi contraseña',
+                field('Contraseña actual', 'passwordActual', '', 'password', 'required autocomplete="current-password"') +
+                field('Nueva contraseña', 'passwordNueva', '', 'password', 'required minlength="8" maxlength="72" autocomplete="new-password"') +
+                '<p class="note">Mínimo 8 caracteres, con letras y números. Después tendrás que iniciar sesión de nuevo.</p>',
+                async f => {
+                    await api('/api/auth/password', { method: 'PUT', body: Object.fromEntries(f) });
+                    logout();
+                    toast('Contraseña cambiada. Inicia sesión con la nueva contraseña.');
+                    return KEEP;
+                },
+                'Cambiar contraseña'
+            );
+            return;
 
         case 'revoke-user-permission':
             return confirmAction(
@@ -1036,10 +1110,11 @@ async function handle(action, element) {
     }
 }
 
+// Delegación de eventos: un listener para todos los botones, también los que se crean después con innerHTML.
 async function onAction(e) {
     const b = e.target.closest('[data-action]');
     if (!b || b.disabled) return;
-    b.disabled = true;
+    b.disabled = true; // evita doble clic mientras la petición está en curso
 
     try {
         await handle(b.dataset.action, b);
@@ -1052,8 +1127,14 @@ async function onAction(e) {
 
 $('#content').addEventListener('click', onAction);
 $('#modal-body').addEventListener('click', onAction);
-$('#modal-body').addEventListener('input', saleEstimate);
+// Enter en el panel de filtros aplica los filtros en vez de recargar la página
+$('#content').addEventListener('submit', e => {
+    if (e.target.id !== 'filters') return;
+    e.preventDefault();
+    handle('apply-filters', e.target);
+});
 
+// Búsqueda rápida: oculta las filas de la página actual que no contienen el texto (no consulta al servidor).
 $('#content').addEventListener('input', e => {
     if (e.target.id !== 'filter') return;
     const term = e.target.value.toLocaleLowerCase();
@@ -1080,6 +1161,7 @@ $('#session-button').onclick = async () => {
                     <h3>Permisos de mi sesión</h3>
                     ${chips(state.me.effectivePermissions)}
                 </div>
+                ${button('change-password', 'Cambiar mi contraseña', '', 'secondary')}
             `,
             null
         );
@@ -1089,6 +1171,7 @@ $('#session-button').onclick = async () => {
     }
 };
 
+// Al recargar la página con un token guardado se intenta entrar directamente; si ya no sirve, vuelve al login.
 if (state.token) {
     enter().catch(() => {
         logout();

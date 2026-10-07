@@ -7,7 +7,8 @@ import org.springframework.validation.annotation.Validated;
 
 @Validated
 @ConfigurationProperties(prefix="security.jwt")
-public record JwtProperties(@NotBlank String secret, @NotBlank String issuer, @NotNull Duration expiration) {
+// El secreto HMAC256 debe tener al menos 32 caracteres para que no se pueda adivinar por fuerza bruta.
+public record JwtProperties(@NotBlank @Size(min=32) String secret, @NotBlank String issuer, @NotNull Duration expiration) {
     @AssertTrue(message="security.jwt.expiration debe ser como mínimo un segundo")
     public boolean isExpirationValid() {
         return expiration != null && expiration.compareTo(Duration.ofSeconds(1)) >= 0;

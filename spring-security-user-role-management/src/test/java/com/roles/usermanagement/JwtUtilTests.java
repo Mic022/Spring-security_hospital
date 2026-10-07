@@ -10,16 +10,19 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class JwtUtilTests {
-    private final JwtProperties settings=new JwtProperties("test-key-only", "configured-issuer", Duration.ofMinutes(7));
+    private final JwtProperties settings=new JwtProperties("test-key-only-with-at-least-32-chars", "configured-issuer", Duration.ofMinutes(7));
     private final JwtUtil jwt=new JwtUtil(settings);
 
     @Test void usesConfiguredIssuerSecretAndExpiration() {
-        String token=jwt.create("ana");
+        String token=jwt.create("ana", "$2a$10$hash-actual");
         var decoded=JWT.require(Algorithm.HMAC256(settings.secret())).withIssuer(settings.issuer()).build().verify(token);
         assertThat(decoded.getExpiresAtAsInstant().getEpochSecond()-decoded.getIssuedAtAsInstant().getEpochSecond()).isEqualTo(420);
         assertThat(jwt.getUsername(token)).isEqualTo("ana");
         assertThat(jwt.isValid(token)).isTrue();
-        assertThat(new JwtUtil(new JwtProperties("different-key","configured-issuer",Duration.ofMinutes(7))).isValid(token)).isFalse();
+        assertThat(new JwtUtil(new JwtProperties("different-key-with-at-least-32-chars","configured-issuer",Duration.ofMinutes(7))).isValid(token)).isFalse();
+        // La huella coincide solo con la contraseña con la que se emitió el token.
+        assertThat(jwt.matchesPassword(token, "$2a$10$hash-actual")).isTrue();
+        assertThat(jwt.matchesPassword(token, "$2a$10$hash-nuevo")).isFalse();
     }
 
     @Test void rejectsExpiredTokensWrongIssuerAndMalformedInput() {

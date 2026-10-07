@@ -1,960 +1,269 @@
 package com.roles.usermanagement;
 
-
-
-
-
-
-
-import java.net.URI;
-
-
-
-import java.net.http.HttpClient;
-
-
-
-import java.net.http.HttpRequest;
-
-
-
-import java.net.http.HttpResponse;
-
-
-
-import org.junit.jupiter.api.Test;
-
-
-
-import org.springframework.beans.factory.annotation.Autowired;
-
-
-
-import org.springframework.boot.test.context.SpringBootTest;
-
-
-
-import org.springframework.core.env.Environment;
-
-
-
-import org.springframework.jdbc.core.JdbcTemplate;
-
-
-
-import org.springframework.security.crypto.password.PasswordEncoder;
-
-
-
-import org.springframework.test.context.ActiveProfiles;
-
-
-
-
-
-
-
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.roles.usermanagement.domain.service.SecurityBootstrapService;
+import com.roles.usermanagement.domain.service.UserRoles;
+import com.roles.usermanagement.domain.service.UserSecurityService;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
-
-
-
-
-
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-
-
-
-@ActiveProfiles("test")
-
-
-
-class UsermanagementApplicationTests {
-
-
-
-    @Autowired com.roles.usermanagement.domain.service.SecurityBootstrapService bootstrap;
-
-
-
-    @Autowired com.roles.usermanagement.domain.service.UserSecurityService userSecurity;
-
-
-
-    @Autowired Environment environment;
-
-
-
-    @Autowired JdbcTemplate jdbc;
-
-
-
+/** Tests de la capa de seguridad: login, JWT, cuentas, roles y permisos. */
+class UsermanagementApplicationTests extends ApiTestSupport {
+    @Autowired SecurityBootstrapService bootstrap;
+    @Autowired UserSecurityService userSecurity;
     @Autowired PasswordEncoder passwordEncoder;
 
-
-
-    private final HttpClient client = HttpClient.newHttpClient();
-
-
-
-
-
-
-
-    private HttpResponse<String> request(String method, String path, String body, String token) throws Exception {
-
-
-
-        var builder = HttpRequest.newBuilder(URI.create("http://localhost:"
-
-
-
-                + environment.getProperty("local.server.port") + path))
-
-
-
-                .header("Content-Type", "application/json");
-
-
-
-        if (token != null) builder.header("Authorization", "Bearer " + token);
-
-
-
-        builder.method(method, body == null ? HttpRequest.BodyPublishers.noBody()
-
-
-
-                : HttpRequest.BodyPublishers.ofString(body));
-
-
-
-        return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-
-
-
-    }
-
-
-
-
-
-
+    private static final int PERMISSIONS = UserRoles.Authority.values().length;
 
     @Test
-
-
-
     void exposesSwaggerWithBearerSecurityAndPublicLogin() throws Exception {
-
-
-
         var docs = request("GET", "/v3/api-docs", null, null);
-
-
-
         assertThat(docs.statusCode()).isEqualTo(200);
-
-
-
-        var json = tools.jackson.databind.json.JsonMapper.builder().build().readTree(docs.body());
-
-
-
-        assertThat(json.path("components").path("securitySchemes").path("bearerAuth").path("scheme").asText())
-
-
-
-                .isEqualTo("bearer");
-
-
-
+        var json = json(docs);
+        assertThat(json.path("components").path("securitySchemes").path("bearerAuth").path("scheme").asText()).isEqualTo("bearer");
         var paths = json.path("paths");
-
-
-
-        assertThat(paths.size()).isEqualTo(21);
-
-
-
         assertThat(paths.path("/api/auth/login").path("post").path("security").isMissingNode()).isTrue();
-
-
-
         assertThat(paths.path("/api/user/all").path("get").path("security").get(0).has("bearerAuth")).isTrue();
-
-
-
-        assertThat(paths.has("/api/user/add")).isTrue();
-
-
-
-        assertThat(paths.has("/api/user/update")).isTrue();
-
-
-
-        assertThat(paths.has("/api/user/delete/{name}")).isTrue();
-
-
-
-        assertThat(paths.has("/api/user/assignRole")).isTrue();
-
-
-
-        assertThat(request("GET", "/v3/api-docs/swagger-config", null, null).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(request("GET", "/v3/api-docs.yaml", null, null).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(request("GET", "/swagger-ui.html", null, null).statusCode()).isIn(301, 302);
-
-
-
-        var ui = request("GET", "/swagger-ui/index.html", null, null);
-
-
-
-        assertThat(ui.statusCode()).isEqualTo(200);
-
-
-
-        assertThat(ui.body()).contains("swagger-ui");
-
-
-
-        assertThat(request("GET", "/swagger-ui/swagger-ui-bundle.js", null, null).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(request("GET", "/swagger-ui/swagger-ui.css", null, null).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(request("GET", "/api/user/all", null, null).statusCode()).isIn(401, 403);
-
-
-
+        assertThat(request("GET", "/swagger-ui/index.html", null, null).statusCode()).isEqualTo(200);
+        assertThat(request("GET", "/api/user/all", null, null).statusCode()).isEqualTo(401);
     }
 
-
-
     @Test
-
-
-
-    void initializesAdminRolesAndPermissionsWithoutOverwritingExistingAccount() throws Exception {
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from app_role", Integer.class)).isEqualTo(2);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from app_permission", Integer.class)).isEqualTo(20);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from role_permission where role_name='ADMIN'", Integer.class))
-
-
-
-                .isEqualTo(20);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from role_permission where role_name='CUSTOMER'", Integer.class))
-
-
-
-                .isEqualTo(1);
-
-
+    void initializesRolesAndPermissionsWithoutOverwritingExistingAccount() throws Exception {
+        // 4 roles del hospital; ADMIN tiene todos los permisos.
+        assertThat(jdbc.queryForObject("select count(*) from app_role", Integer.class)).isEqualTo(4);
+        assertThat(jdbc.queryForObject("select count(*) from app_permission", Integer.class)).isEqualTo(PERMISSIONS);
+        assertThat(jdbc.queryForObject("select count(*) from role_permission where role_name='ADMIN'", Integer.class)).isEqualTo(PERMISSIONS);
+        assertThat(jdbc.queryForObject("select count(*) from role_permission where role_name='MEDICO'", Integer.class))
+                .isEqualTo(UserRoles.Role.MEDICO.permissions().size());
 
         String hash = jdbc.queryForObject("select password from \"user\" where username='superadmin'", String.class);
-
-
-
-        assertThat(passwordEncoder.matches("secret", hash)).isTrue();
-
-
-
+        assertThat(passwordEncoder.matches("Secret123", hash)).isTrue();
         jdbc.update("update \"user\" set email='changed@test.local' where username='superadmin'");
-
-
-
+        // Volver a ejecutar el bootstrap no cambia la cuenta existente ni duplica datos.
         bootstrap.initialize();
-
-
-
         bootstrap.initialize();
-
-
-
-        assertThat(jdbc.queryForObject("select password from \"user\" where username='superadmin'", String.class))
-
-
-
-                .isEqualTo(hash);
-
-
-
-        assertThat(jdbc.queryForObject("select email from \"user\" where username='superadmin'", String.class))
-
-
-
-                .isEqualTo("changed@test.local");
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from user_role where username='superadmin'", Integer.class))
-
-
-
-                .isEqualTo(1);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from app_role", Integer.class)).isEqualTo(2);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from app_permission", Integer.class)).isEqualTo(20);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from role_permission", Integer.class)).isEqualTo(21);
-
-
-
+        assertThat(jdbc.queryForObject("select password from \"user\" where username='superadmin'", String.class)).isEqualTo(hash);
+        assertThat(jdbc.queryForObject("select email from \"user\" where username='superadmin'", String.class)).isEqualTo("changed@test.local");
+        assertThat(jdbc.queryForObject("select count(*) from app_role", Integer.class)).isEqualTo(4);
         assertThat(userSecurity.loadUserByUsername("superadmin").getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .contains("ROLE_ADMIN", "USER_READ", "ROLE_ASSIGN", "REPORTE_READ", "ALERTA_ATENDER");
 
-
-
-                .extracting(org.springframework.security.core.GrantedAuthority::getAuthority)
-
-
-
-                .contains("ROLE_ADMIN", "USER_READ", "USER_CREATE", "USER_UPDATE", "USER_DELETE", "ROLE_ASSIGN", "random_order");
-
-
-
-        assertThat(request("POST", "/api/auth/login",
-
-
-
-                "{\"username\":\"superadmin\",\"password\":\"wrong\"}", null).statusCode()).isEqualTo(401);
-
-
-
-        assertThat(request("POST", "/api/auth/login",
-
-
-
-                "{\"username\":\"unknown\",\"password\":\"secret\"}", null).statusCode()).isEqualTo(401);
-
-
-
+        assertThat(request("POST", "/api/auth/login", "{\"username\":\"superadmin\",\"password\":\"wrong\"}", null).statusCode()).isEqualTo(401);
+        assertThat(request("POST", "/api/auth/login", "{\"username\":\"unknown\",\"password\":\"Secret123\"}", null).statusCode()).isEqualTo(401);
         assertThat(request("POST", "/api/auth/login", "{}", null).statusCode()).isEqualTo(400);
-
-
-
-        assertThat(login("superadmin")).isNotBlank();
-        var configuredToken=com.auth0.jwt.JWT.decode(login("superadmin"));
-        assertThat(configuredToken.getIssuer()).isEqualTo("user-management-tests");
-        assertThat(configuredToken.getExpiresAtAsInstant().getEpochSecond()-configuredToken.getIssuedAtAsInstant().getEpochSecond()).isEqualTo(1800);
-
-
-
-
+        var token = com.auth0.jwt.JWT.decode(login("superadmin"));
+        assertThat(token.getIssuer()).isEqualTo("user-management-tests");
+        assertThat(token.getExpiresAtAsInstant().getEpochSecond() - token.getIssuedAtAsInstant().getEpochSecond()).isEqualTo(1800);
     }
 
-
-
     @Test
-
-
-
     void enforcesPersistedPermissionsAndRejectsLockedLogin() throws Exception {
-
-
-
         String token = login("superadmin");
-
-
-
+        // Los permisos se leen de la base en cada petición: quitar uno tiene efecto inmediato.
         jdbc.update("delete from role_permission where role_name='ADMIN' and permission_name='USER_READ'");
-
-
-
         try {
-
-
-
             assertThat(request("GET", "/api/user/all", null, token).statusCode()).isEqualTo(403);
-
-
-
         } finally {
-
-
-
             bootstrap.initialize();
-
-
-
         }
-
-
-
         assertThat(request("GET", "/api/user/all", null, token).statusCode()).isEqualTo(200);
-
-
-
         jdbc.update("update \"user\" set locked=true where username='superadmin'");
-
-
-
         try {
-
-
-
-            assertThat(request("POST", "/api/auth/login",
-
-
-
-                    "{\"username\":\"superadmin\",\"password\":\"secret\"}", null).statusCode()).isEqualTo(401);
-
-
-
+            assertThat(request("POST", "/api/auth/login", "{\"username\":\"superadmin\",\"password\":\"Secret123\"}", null).statusCode()).isEqualTo(401);
+            assertThat(request("GET", "/api/user/all", null, token).statusCode()).isEqualTo(401);
         } finally {
-
-
-
             jdbc.update("update \"user\" set locked=false where username='superadmin'");
-
-
-
         }
-
-
-
     }
 
-
-
     @Test
-
-
-
-    void updatesExistingRolesWithoutDuplicatesAndEncodesPlainPassword() throws Exception {
-
-
-
-        String token = login("superadmin");
-
-
-
-        String create = "{\"username\":\"putuser\",\"email\":\"putuser@test.local\","
-
-
-
-                + "\"password\":\"old-password\",\"locked\":false,\"disabled\":false,\"roles\":[]}";
-
-
-
-        assertThat(request("POST", "/api/user/add", create, token).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(request("POST", "/api/user/assignRole",
-
-
-
-                "{\"username\":\"putuser\",\"role\":\"CUSTOMER\"}", token).statusCode()).isEqualTo(200);
-
-
-
-        String update = "{\"username\":\"putuser\",\"email\":\"changed-putuser@test.local\","
-
-
-
-                + "\"locked\":false,\"disabled\":false,\"password\":\"new-password\","
-
-
-
-                + "\"roles\":[{\"username\":\"putuser\",\"role\":\"ADMIN\"}]}";
-
-
-
-        assertThat(request("PUT", "/api/user/update", update, token).statusCode()).isEqualTo(200);
-
-
-
-        var granted = jdbc.queryForObject("select granted_date from user_role where username='putuser' and role='ADMIN'", java.sql.Timestamp.class);
-
-
-
-        assertThat(request("PUT", "/api/user/update", update, token).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(jdbc.queryForObject("select granted_date from user_role where username='putuser' and role='ADMIN'", java.sql.Timestamp.class)).isEqualTo(granted);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from user_role where username='putuser'", Integer.class)).isEqualTo(1);
-
-
-
-        String hash = jdbc.queryForObject("select password from \"user\" where username='putuser'", String.class);
-
-
-
-        assertThat(passwordEncoder.matches("new-password", hash)).isTrue();
-
-
-
-        assertThat(request("POST", "/api/auth/login", "{\"username\":\"putuser\",\"password\":\"new-password\"}", null).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(request("POST", "/api/auth/login", "{\"username\":\"putuser\",\"password\":\"old-password\"}", null).statusCode()).isEqualTo(401);
-
-
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"disabled\":true}", token).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(jdbc.queryForObject("select password from \"user\" where username='putuser'", String.class)).isEqualTo(hash);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from user_role where username='putuser'", Integer.class)).isEqualTo(1);
-
-
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"disabled\":false,\"roles\":[{\"role\":\"ADMIN\"},{\"role\":\"CUSTOMER\"},{\"role\":\"ADMIN\"}]}", token).statusCode()).isEqualTo(400);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from user_role where username='putuser'", Integer.class)).isEqualTo(1);
-
-
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"roles\":[]}", token).statusCode()).isEqualTo(400);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from user_role where username='putuser'", Integer.class)).isEqualTo(1);
-
-
-
-        assertThat(request("DELETE", "/api/user/delete/putuser", null, token).statusCode()).isEqualTo(200);
-
-
-
-    }
-
-
-
-
-
-
-
-    @Test
-
-
-
-    void returnsConflictForDuplicateEmailAndRollsBackInvalidRole() throws Exception {
-
-
-
-        String token = login("superadmin");
-
-
-
-        assertThat(request("POST", "/api/user/add", "{\"username\":\"conflictuser\",\"email\":\"conflict@test.local\",\"password\":\"secret\",\"locked\":false,\"disabled\":false,\"roles\":[]}", token).statusCode()).isEqualTo(200);
-
-
-
-        String email = jdbc.queryForObject("select email from \"user\" where username='superadmin'", String.class);
-
-
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"conflictuser\",\"email\":\"" + email + "\"}", token).statusCode()).isEqualTo(409);
-
-
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"conflictuser\",\"email\":\"invalid-role-change@test.local\",\"roles\":[{\"role\":\"UNKNOWN\"}]}", token).statusCode()).isEqualTo(400);
-
-
-
-        assertThat(jdbc.queryForObject("select email from \"user\" where username='conflictuser'", String.class)).isEqualTo("conflict@test.local");
-
-
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"conflictuser\",\"roles\":[{\"username\":\"anotheruser\",\"role\":\"ADMIN\"}]}", token).statusCode()).isEqualTo(400);
-
-
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"conflictuser\",\"password\":\"\"}", token).statusCode()).isEqualTo(400);
-
-
-
-        assertThat(request("DELETE", "/api/user/delete/conflictuser", null, token).statusCode()).isEqualTo(200);
-
-
-
-    }
-
-
-
-
-
-    @Test
-
-    void grantsIndividualPermissionsWithoutChangingRole() throws Exception {
-
+    void createsAndUpdatesAccountsWithASingleRole() throws Exception {
         String admin = login("superadmin");
-
-        for (String name : new String[]{"extrauser", "plainuser"}) {
-
-            assertThat(request("POST", "/api/user/add", "{\"username\":\""+name+"\",\"email\":\""+name+"@test.local\",\"password\":\"secret\"}", admin).statusCode()).isEqualTo(200);
-
+        try {
+            // El rol es obligatorio al crear.
+            assertThat(request("POST", "/api/user/add", "{\"username\":\"norole\",\"email\":\"norole@test.local\",\"password\":\"Secret123\"}", admin).statusCode()).isEqualTo(400);
+            createUser(admin, "putuser", "RECEPCION");
+            assertThat(request("POST", "/api/user/add", "{\"username\":\"putuser\",\"email\":\"x@test.local\",\"password\":\"Secret123\",\"role\":\"RECEPCION\"}", admin).statusCode()).isEqualTo(409);
+            assertThat(request("POST", "/api/user/assignRole", "{\"username\":\"putuser\",\"role\":\"ENFERMERO\"}", admin).statusCode()).isEqualTo(200);
+            String update = "{\"username\":\"putuser\",\"email\":\"changed@test.local\",\"password\":\"NewPassword1\",\"role\":\"MEDICO\"}";
+            assertThat(request("PUT", "/api/user/update", update, admin).statusCode()).isEqualTo(200);
+            assertThat(jdbc.queryForObject("select count(*) from user_role where username='putuser'", Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select role from user_role where username='putuser'", String.class)).isEqualTo("MEDICO");
+            String hash = jdbc.queryForObject("select password from \"user\" where username='putuser'", String.class);
+            assertThat(passwordEncoder.matches("NewPassword1", hash)).isTrue();
+            assertThat(request("POST", "/api/auth/login", "{\"username\":\"putuser\",\"password\":\"NewPassword1\"}", null).statusCode()).isEqualTo(200);
+            // Campos omitidos se conservan.
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"disabled\":true}", admin).statusCode()).isEqualTo(200);
+            assertThat(jdbc.queryForObject("select password from \"user\" where username='putuser'", String.class)).isEqualTo(hash);
+            // Validaciones.
+            String superEmail = jdbc.queryForObject("select email from \"user\" where username='superadmin'", String.class);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"email\":\"" + superEmail + "\"}", admin).statusCode()).isEqualTo(409);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"role\":\"UNKNOWN\"}", admin).statusCode()).isEqualTo(400);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"password\":\"\"}", admin).statusCode()).isEqualTo(400);
+            // Política de contraseñas: mínimo 8 caracteres con letras y números.
+            for (String debil : new String[]{"corta1", "solotexto", "12345678"}) {
+                assertThat(request("PUT", "/api/user/update", "{\"username\":\"putuser\",\"password\":\"" + debil + "\"}", admin).statusCode()).isEqualTo(400);
+                assertThat(request("POST", "/api/user/add", "{\"username\":\"weak\",\"email\":\"weak@test.local\",\"password\":\"" + debil + "\",\"role\":\"RECEPCION\"}", admin).statusCode()).isEqualTo(400);
+            }
+            assertThat(request("GET", "/api/user/all", null, admin).body()).doesNotContain("password", "$2a$");
+            assertThat(request("DELETE", "/api/user/delete/putuser", null, admin).statusCode()).isEqualTo(200);
+            assertThat(request("DELETE", "/api/user/delete/putuser", null, admin).statusCode()).isEqualTo(404);
+        } finally {
+            deleteUser("putuser");
         }
-
-        String extra = login("extrauser"), plain = login("plainuser");
-
-        assertThat(request("GET", "/api/user/all", null, extra).statusCode()).isEqualTo(403);
-
-        String grant = "{\"username\":\"extrauser\",\"permission\":\"USER_READ\"}";
-
-        assertThat(request("POST", "/api/user/assignPermission", grant, extra).statusCode()).isEqualTo(403);
-
-        for (int i=0;i<2;i++) assertThat(request("POST", "/api/user/assignPermission", grant, admin).statusCode()).isEqualTo(200);
-
-        assertThat(jdbc.queryForObject("select count(*) from user_permission where username='extrauser'", Integer.class)).isEqualTo(1);
-
-        assertThat(request("GET", "/api/user/all", null, extra).statusCode()).isEqualTo(200);
-
-        assertThat(request("GET", "/api/user/all", null, extra).body()).doesNotContain("password", "$2a$");
-
-        assertThat(request("GET", "/api/user/all", null, plain).statusCode()).isEqualTo(403);
-
-        assertThat(request("POST", "/api/user/add", "{}", extra).statusCode()).isEqualTo(403);
-
-        assertThat(request("GET", "/api/user/extrauser/permissions", null, admin).body()).contains("CUSTOMER", "USER_READ", "random_order");
-
-        assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"extrauser\",\"permission\":\"USER_UPDATE\"}", admin).statusCode()).isEqualTo(200);
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"extrauser\",\"role\":\"ADMIN\"}", extra).statusCode()).isEqualTo(403);
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"extrauser\",\"additionalPermissions\":[\"PERMISSION_ASSIGN\"]}", extra).statusCode()).isEqualTo(403);
-
-        assertThat(request("PUT", "/api/user/update", "{\"username\":\"extrauser\",\"additionalPermissions\":[\"USER_READ\",\"USER_READ\"]}", admin).statusCode()).isEqualTo(200);
-
-        assertThat(jdbc.queryForObject("select count(*) from user_permission where username='extrauser'", Integer.class)).isEqualTo(1);
-
-
-
-        assertThat(request("DELETE", "/api/user/extrauser/permissions/USER_READ", null, admin).statusCode()).isEqualTo(200);
-
-        assertThat(request("GET", "/api/user/all", null, extra).statusCode()).isEqualTo(403);
-
-        assertThat(request("POST", "/api/user/assignPermission", grant, admin).statusCode()).isEqualTo(200);
-
-        String role = "{\"username\":\"extrauser\",\"role\":\"ADMIN\"}";
-
-        for (int i=0;i<2;i++) assertThat(request("POST", "/api/user/assignRole", role, admin).statusCode()).isEqualTo(200);
-
-        assertThat(jdbc.queryForObject("select count(*) from user_role where username='extrauser'", Integer.class)).isEqualTo(1);
-
-        assertThat(jdbc.queryForObject("select count(*) from user_permission where username='extrauser'", Integer.class)).isEqualTo(1);
-
-        assertThat(request("DELETE", "/api/user/extrauser/permissions/USER_READ", null, admin).statusCode()).isEqualTo(200);
-
-        assertThat(request("GET", "/api/user/all", null, extra).statusCode()).isEqualTo(200);
-
-        assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"extrauser\",\"permission\":\"UNKNOWN\"}", admin).statusCode()).isEqualTo(400);
-
-        for (String name : new String[]{"extrauser", "plainuser"}) assertThat(request("DELETE", "/api/user/delete/"+name, null, admin).statusCode()).isEqualTo(200);
-
-        assertThat(jdbc.queryForObject("select count(*) from user_permission where username='extrauser'", Integer.class)).isZero();
-
     }
-
-
-
-    private String login(String username) throws Exception {
-
-
-
-        // Characterizes the existing login contract, including its password validation limitation.
-
-
-
-        var response = request("POST", "/api/auth/login",
-
-
-
-                "{\"username\":\"" + username + "\",\"password\":\"secret\"}", null);
-
-
-
-        assertThat(response.statusCode()).isEqualTo(200);
-
-
-
-        assertThat(response.body().split("\\.")).hasSize(3);
-
-
-
-        return response.body();
-
-
-
-    }
-
-
-
-
-
-
 
     @Test
-
-
-
-    void preservesUserManagementAndRoleAuthorization() throws Exception {
-
-
-
-        String adminToken = login("superadmin");
-
-
-
-        assertThat(request("GET", "/api/user/all", null, null).statusCode()).isIn(401, 403);
-
-
-
-        assertThat(request("GET", "/api/user/all", null, "invalid-token").statusCode()).isIn(401, 403);
-
-
-
-        assertThat(request("GET", "/api/user/all", null, adminToken).statusCode()).isEqualTo(200);
-
-
-
-
-
-
-
-        String user = "{\"username\":\"customer\",\"email\":\"customer@example.com\","
-
-
-
-                + "\"password\":\"secret\",\"locked\":false,\"disabled\":false,\"roles\":[]}";
-
-
-
-        var created = request("POST", "/api/user/add", user, adminToken);
-
-
-
-        assertThat(created.statusCode()).isEqualTo(200);
-
-
-
-        assertThat(created.body()).contains("customer@example.com");
-
-
-
-        String hash = jdbc.queryForObject("select password from \"user\" where username='customer'", String.class);
-
-
-
-        assertThat(passwordEncoder.matches("secret", hash)).isTrue();
-
-
-
-        assertThat(request("POST", "/api/user/add", user, adminToken).statusCode()).isEqualTo(409);
-
-
-
-
-
-
-
-        String updated = "{\"username\":\"customer\",\"email\":\"updated@example.com\"}";
-
-
-
-        assertThat(request("PUT", "/api/user/update", updated, adminToken).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(request("GET", "/api/user/all", null, adminToken).body()).contains("updated@example.com");
-
-
-
-        assertThat(request("POST", "/api/user/assignRole",
-
-
-
-                "{\"username\":\"customer\",\"role\":\"CUSTOMER\"}", adminToken).statusCode()).isEqualTo(200);
-
-
-
-        String customerToken = login("customer");
-
-
-
-        assertThat(request("GET", "/api/user/all", null, customerToken).statusCode()).isEqualTo(403);
-
-
-
-        assertThat(request("DELETE", "/api/user/delete/customer", null, adminToken).statusCode()).isEqualTo(200);
-
-
-
-        assertThat(jdbc.queryForObject("select count(*) from user_role where username='customer'", Integer.class)).isZero();
-
-
-
-        assertThat(request("DELETE", "/api/user/delete/customer", null, adminToken).statusCode()).isEqualTo(404);
-
-
-
-        assertThat(request("PUT", "/api/user/update", user, adminToken).statusCode()).isEqualTo(404);
-
-
-
-        assertThat(request("POST", "/api/user/assignRole",
-
-
-
-                "{\"username\":\"customer\",\"role\":\"CUSTOMER\"}", adminToken).statusCode()).isEqualTo(404);
-
-
-
+    void grantsIndividualPermissionsWithoutChangingRole() throws Exception {
+        String admin = login("superadmin");
+        try {
+            createUser(admin, "extrauser", "RECEPCION");
+            String extra = login("extrauser");
+            assertThat(request("GET", "/api/user/all", null, extra).statusCode()).isEqualTo(403);
+            String grant = "{\"username\":\"extrauser\",\"permission\":\"USER_READ\"}";
+            assertThat(request("POST", "/api/user/assignPermission", grant, extra).statusCode()).isEqualTo(403);
+            for (int i = 0; i < 2; i++) assertThat(request("POST", "/api/user/assignPermission", grant, admin).statusCode()).isEqualTo(200);
+            assertThat(jdbc.queryForObject("select count(*) from user_permission where username='extrauser'", Integer.class)).isEqualTo(1);
+            assertThat(request("GET", "/api/user/all", null, extra).statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/user/extrauser/permissions", null, admin).body()).contains("RECEPCION", "USER_READ", "CITA_MANAGE");
+            assertThat(request("DELETE", "/api/user/extrauser/permissions/USER_READ", null, admin).statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/user/all", null, extra).statusCode()).isEqualTo(403);
+            assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"extrauser\",\"permission\":\"UNKNOWN\"}", admin).statusCode()).isEqualTo(400);
+        } finally {
+            deleteUser("extrauser");
+        }
     }
 
-
-
-
     @Test
-    void managesDynamicRolesAndPermissionsWithForeignKeys() throws Exception {
-        String admin=login("superadmin");
+    void managesDynamicRolesAndPermissions() throws Exception {
+        String admin = login("superadmin");
         try {
             assertThat(request("POST", "/api/permissions", "{\"name\":\"REPORT_EXPORT\"}", admin).statusCode()).isEqualTo(201);
             assertThat(request("POST", "/api/permissions", "{\"name\":\"REPORT_EXPORT\"}", admin).statusCode()).isEqualTo(409);
             assertThat(request("POST", "/api/permissions", "{\"name\":\"invalid name\"}", admin).statusCode()).isEqualTo(400);
             assertThat(request("POST", "/api/roles", "{\"name\":\"INVALID_ROLE\",\"permissions\":[\"DOES_NOT_EXIST\"]}", admin).statusCode()).isEqualTo(404);
-            assertThat(jdbc.queryForObject("select count(*) from app_role where name='INVALID_ROLE'", Integer.class)).isZero();
             assertThat(request("POST", "/api/roles", "{\"name\":\"AUDITOR\",\"permissions\":[\"USER_READ\"]}", admin).statusCode()).isEqualTo(201);
-            assertThat(request("POST", "/api/roles", "{\"name\":\"AUDITOR\"}", admin).statusCode()).isEqualTo(409);
-            for(int i=0;i<2;i++) assertThat(request("PUT", "/api/roles/AUDITOR/permissions/REPORT_EXPORT", null, admin).statusCode()).isEqualTo(200);
-            assertThat(jdbc.queryForObject("select count(*) from role_permission where role_name='AUDITOR'", Integer.class)).isEqualTo(2);
-            assertThat(request("POST", "/api/user/add", "{\"username\":\"audittest\",\"email\":\"audit@test.local\",\"password\":\"secret\",\"role\":\"AUDITOR\"}", admin).statusCode()).isEqualTo(200);
-            String auditor=login("audittest");
+            // El permiso nuevo se agregó a ADMIN, por eso el administrador puede repartirlo.
+            assertThat(request("PUT", "/api/roles/AUDITOR/permissions/REPORT_EXPORT", null, admin).statusCode()).isEqualTo(200);
+            createUser(admin, "audittest", "AUDITOR");
+            String auditor = login("audittest");
             assertThat(request("GET", "/api/user/all", null, auditor).statusCode()).isEqualTo(200);
-            assertThat(request("POST", "/api/permissions", "{\"name\":\"UNAUTHORIZED\"}", auditor).statusCode()).isEqualTo(403);
             assertThat(request("POST", "/api/roles", "{\"name\":\"UNAUTHORIZED\"}", auditor).statusCode()).isEqualTo(403);
-            assertThat(request("GET", "/api/user/audittest/permissions", null, admin).body()).contains("REPORT_EXPORT", "AUDITOR");
-            assertThat(request("GET", "/api/roles", null, admin).body()).contains("AUDITOR");
-            assertThat(request("GET", "/api/permissions", null, admin).body()).contains("REPORT_EXPORT");
             assertThat(request("DELETE", "/api/roles/AUDITOR/permissions/USER_READ", null, admin).statusCode()).isEqualTo(200);
             assertThat(request("GET", "/api/user/all", null, auditor).statusCode()).isEqualTo(403);
-            assertThat(request("PUT", "/api/roles/AUDITOR/permissions/UNKNOWN", null, admin).statusCode()).isEqualTo(404);
+            // Los permisos base de los roles del sistema están reservados.
             assertThat(request("DELETE", "/api/roles/ADMIN/permissions/ROLE_MANAGE", null, admin).statusCode()).isEqualTo(409);
-            org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
-                    () -> jdbc.update("insert into role_permission(role_name,permission_name) values ('AUDITOR','UNKNOWN')"));
-            org.junit.jupiter.api.Assertions.assertThrows(org.springframework.dao.DataIntegrityViolationException.class,
-                    () -> jdbc.update("insert into role_permission(role_name,permission_name) values ('UNKNOWN','USER_READ')"));
+            assertThat(request("DELETE", "/api/roles/MEDICO/permissions/REPORTE_READ", null, admin).statusCode()).isEqualTo(409);
         } finally {
-            jdbc.update("delete from user_role where username='audittest'");
-            jdbc.update("delete from \"user\" where username='audittest'");
-            jdbc.update("delete from role_permission where role_name='AUDITOR'");
+            deleteUser("audittest");
+            jdbc.update("delete from role_permission where role_name='AUDITOR' or permission_name='REPORT_EXPORT'");
             jdbc.update("delete from app_role where name='AUDITOR'");
             jdbc.update("delete from app_permission where name='REPORT_EXPORT'");
         }
     }
 
-    private long responseId(HttpResponse<String> response) throws Exception {
-        return tools.jackson.databind.json.JsonMapper.builder().build().readTree(response.body()).path("id").asLong();
-    }
+    /** Un usuario con permisos parciales no puede escalar privilegios. */
     @Test
-    void protectsBusinessModulesAndKeepsSalesAndStockConsistent() throws Exception {
-        String admin=login("superadmin");
-        long customerId=0,productId=0;
+    void preventsPrivilegeEscalation() throws Exception {
+        String admin = login("superadmin");
         try {
-            assertThat(request("GET", "/api/products", null, null).statusCode()).isIn(401,403);
-            var customer=request("POST", "/api/customers", "{\"name\":\"Cliente prueba\",\"email\":\"client@test.local\",\"phone\":\"123\"}", admin);
-            assertThat(customer.statusCode()).isEqualTo(201);customerId=responseId(customer);
-            var product=request("POST", "/api/products", "{\"name\":\"Producto prueba\",\"sku\":\"TEST-SKU\",\"price\":12.50,\"stock\":5}", admin);
-            assertThat(product.statusCode()).isEqualTo(201);productId=responseId(product);
-            assertThat(request("POST", "/api/products", "{\"name\":\"X\",\"sku\":\"TEST-SKU\",\"price\":12.50,\"stock\":1}", admin).statusCode()).isEqualTo(409);
-            assertThat(request("POST", "/api/products", "{\"name\":\"X\",\"sku\":\"INVALID\",\"price\":-1,\"stock\":-2}", admin).statusCode()).isEqualTo(400);
-            assertThat(request("PUT", "/api/customers/"+customerId, "{\"name\":\"Actualizado\",\"email\":\"client@test.local\"}", admin).statusCode()).isEqualTo(200);
-            assertThat(request("GET", "/api/customers/"+customerId,null,admin).body()).contains("Actualizado");
-            assertThat(request("GET", "/api/products?page=0&size=10",null,admin).statusCode()).isEqualTo(200);
-            assertThat(request("GET", "/api/products?size=101",null,admin).statusCode()).isEqualTo(400);
-            assertThat(request("POST", "/api/user/add", "{\"username\":\"businessuser\",\"email\":\"business@test.local\",\"password\":\"secret\"}", admin).statusCode()).isEqualTo(200);
-            String customerToken=login("businessuser");
-            assertThat(request("GET", "/api/auth/me",null,customerToken).body()).contains("businessuser", "CUSTOMER", "effectivePermissions");
-            assertThat(request("GET", "/api/auth/me",null,null).statusCode()).isIn(401,403);
-            assertThat(request("GET", "/api/products",null,customerToken).statusCode()).isEqualTo(403);
-            assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"businessuser\",\"permission\":\"PRODUCT_READ\"}",admin).statusCode()).isEqualTo(200);
-            assertThat(request("GET", "/api/products",null,customerToken).statusCode()).isEqualTo(200);
-            assertThat(request("GET", "/api/customers",null,customerToken).statusCode()).isEqualTo(403);
-            assertThat(request("POST", "/api/products", "{\"name\":\"X\",\"sku\":\"DENIED\",\"price\":1,\"stock\":1}",customerToken).statusCode()).isEqualTo(403);
-            jdbc.update("update \"user\" set disabled=true where username='businessuser'");
-            assertThat(request("GET", "/api/products",null,customerToken).statusCode()).isIn(401,403);
-            jdbc.update("update \"user\" set disabled=false,locked=true where username='businessuser'");
-            assertThat(request("GET", "/api/products",null,customerToken).statusCode()).isIn(401,403);
-            jdbc.update("update \"user\" set locked=false where username='businessuser'");
-            String saleBody="{\"customerId\":"+customerId+",\"items\":[{\"productId\":"+productId+",\"quantity\":4}]}";
-            assertThat(request("POST", "/api/sales",saleBody,customerToken).statusCode()).isEqualTo(403);
-            try(var executor=java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
-                var a=executor.submit(()->request("POST", "/api/sales",saleBody,admin));
-                var b=executor.submit(()->request("POST", "/api/sales",saleBody,admin));
-                var first=a.get();var second=b.get();
-                assertThat(java.util.List.of(first.statusCode(),second.statusCode())).containsExactlyInAnyOrder(201,409);
-                var success=first.statusCode()==201?first:second;long saleId=responseId(success);
-                assertThat(success.body()).contains("50.00", "superadmin", "Actualizado");
-                assertThat(jdbc.queryForObject("select stock from business_product where id=?",Integer.class,productId)).isEqualTo(1);
-                assertThat(request("PUT", "/api/products/"+productId, "{\"name\":\"Precio nuevo\",\"sku\":\"TEST-SKU\",\"price\":20,\"stock\":1}", admin).statusCode()).isEqualTo(200);
-                assertThat(request("GET", "/api/sales/"+saleId,null,admin).body()).contains("12.50", "Producto prueba");
-                for(int i=0;i<2;i++)assertThat(request("POST", "/api/sales/"+saleId+"/cancel",null,admin).statusCode()).isEqualTo(200);
-                assertThat(jdbc.queryForObject("select stock from business_product where id=?",Integer.class,productId)).isEqualTo(5);
-                assertThat(request("GET", "/api/sales",null,admin).statusCode()).isEqualTo(200);
+            createUser(admin, "helper", "RECEPCION");
+            for (String p : new String[]{"USER_UPDATE", "USER_DELETE", "PERMISSION_ASSIGN"}) {
+                assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"helper\",\"permission\":\"" + p + "\"}", admin).statusCode()).isEqualTo(200);
             }
-            String rollback="{\"customerId\":"+customerId+",\"items\":[{\"productId\":"+productId+",\"quantity\":1},{\"productId\":9223372036854775807,\"quantity\":1}]}";
-            assertThat(request("POST", "/api/sales",rollback,admin).statusCode()).isEqualTo(404);
-            assertThat(jdbc.queryForObject("select stock from business_product where id=?",Integer.class,productId)).isEqualTo(5);
-            assertThat(request("POST", "/api/sales",saleBody.replace("\"quantity\":4","\"quantity\":0"),admin).statusCode()).isEqualTo(400);
-            assertThat(request("DELETE", "/api/products/"+productId,null,admin).statusCode()).isEqualTo(204);
-            assertThat(request("POST", "/api/sales",saleBody,admin).statusCode()).isEqualTo(409);
-            assertThat(request("DELETE", "/api/customers/"+customerId,null,admin).statusCode()).isEqualTo(204);
-            assertThat(request("POST", "/api/sales",saleBody,admin).statusCode()).isEqualTo(409);
+            String helper = login("helper");
+            // No puede cambiar la contraseña, bloquear ni eliminar al administrador.
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"password\":\"Hacked123\"}", helper).statusCode()).isEqualTo(403);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"locked\":true}", helper).statusCode()).isEqualTo(403);
+            assertThat(request("DELETE", "/api/user/delete/superadmin", null, helper).statusCode()).isEqualTo(403);
+            // No puede darse un permiso que no tiene; sí uno que ya tiene.
+            assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"helper\",\"permission\":\"ROLE_ASSIGN\"}", helper).statusCode()).isEqualTo(403);
+            assertThat(request("POST", "/api/user/assignPermission", "{\"username\":\"helper\",\"permission\":\"USER_UPDATE\"}", helper).statusCode()).isEqualTo(200);
+            // Nadie puede eliminarse ni bloquearse a sí mismo.
+            assertThat(request("DELETE", "/api/user/delete/superadmin", null, admin).statusCode()).isEqualTo(409);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"disabled\":true}", admin).statusCode()).isEqualTo(409);
+            // Nadie puede cambiar su propio rol (el admin no puede quitarse ADMIN); repetir el mismo rol sí se permite.
+            assertThat(request("POST", "/api/user/assignRole", "{\"username\":\"superadmin\",\"role\":\"ENFERMERO\"}", admin).statusCode()).isEqualTo(409);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"role\":\"ENFERMERO\"}", admin).statusCode()).isEqualTo(409);
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"superadmin\",\"role\":\"ADMIN\"}", admin).statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/auth/me", null, admin).body()).contains("\"role\":\"ADMIN\"");
+            // Sin token o con token inválido: 401. Con token sin permiso: 403.
+            assertThat(request("GET", "/api/user/all", null, null).statusCode()).isEqualTo(401);
+            assertThat(request("GET", "/api/user/all", null, "token-invalido").statusCode()).isEqualTo(401);
+            assertThat(request("GET", "/api/user/all", null, helper).statusCode()).isEqualTo(403);
         } finally {
-            jdbc.update("delete from business_sale_item where sale_id in (select id from business_sale where customer_id=?)",customerId);
-            jdbc.update("delete from business_sale where customer_id=?",customerId);
-            jdbc.update("delete from business_product where id=?",productId);
-            jdbc.update("delete from business_customer where id=?",customerId);
-            jdbc.update("delete from user_permission where username='businessuser'");
-            jdbc.update("delete from user_role where username='businessuser'");
-            jdbc.update("delete from \"user\" where username='businessuser'");
+            deleteUser("helper");
+        }
+    }
+
+    /** Fuerza bruta: 5 fallos seguidos bloquean el login de ese usuario (desde esa IP). */
+    @Test
+    void blocksLoginAfterRepeatedFailures() throws Exception {
+        String admin = login("superadmin");
+        String bad = "{\"username\":\"bruteuser\",\"password\":\"Incorrecta1\"}";
+        try {
+            createUser(admin, "bruteuser", "RECEPCION");
+            // Un login correcto antes del máximo reinicia el contador.
+            for (int i = 0; i < 4; i++) assertThat(request("POST", "/api/auth/login", bad, null).statusCode()).isEqualTo(401);
+            login("bruteuser");
+            for (int i = 0; i < 4; i++) assertThat(request("POST", "/api/auth/login", bad, null).statusCode()).isEqualTo(401);
+            // Quinto fallo seguido: bloqueado, incluso con la contraseña correcta.
+            assertThat(request("POST", "/api/auth/login", bad, null).statusCode()).isEqualTo(401);
+            var bloqueado = request("POST", "/api/auth/login", "{\"username\":\"BruteUser\",\"password\":\"Secret123\"}", null);
+            assertThat(bloqueado.statusCode()).isEqualTo(429);
+            assertThat(bloqueado.body()).contains("15 minuto");
+            // Las demás cuentas no se ven afectadas.
+            assertThat(login("superadmin")).isNotBlank();
+        } finally {
+            deleteUser("bruteuser");
+        }
+    }
+
+    /** Cambiar la contraseña invalida los tokens emitidos antes del cambio. */
+    @Test
+    void passwordChangeInvalidatesOldTokens() throws Exception {
+        String admin = login("superadmin");
+        try {
+            createUser(admin, "tokenuser", "RECEPCION");
+            String viejo = login("tokenuser");
+            assertThat(request("GET", "/api/auth/me", null, viejo).statusCode()).isEqualTo(200);
+            // Cambiar otro dato no afecta al token.
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"tokenuser\",\"email\":\"nuevo@test.local\"}", admin).statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/auth/me", null, viejo).statusCode()).isEqualTo(200);
+            // Cambiar la contraseña sí: el token anterior deja de servir.
+            assertThat(request("PUT", "/api/user/update", "{\"username\":\"tokenuser\",\"password\":\"OtraClave99\"}", admin).statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/auth/me", null, viejo).statusCode()).isEqualTo(401);
+            var nuevo = request("POST", "/api/auth/login", "{\"username\":\"tokenuser\",\"password\":\"OtraClave99\"}", null);
+            assertThat(nuevo.statusCode()).isEqualTo(200);
+            assertThat(request("GET", "/api/auth/me", null, nuevo.body()).statusCode()).isEqualTo(200);
+        } finally {
+            deleteUser("tokenuser");
+        }
+    }
+
+    /** Cada usuario puede cambiar su propia contraseña, demostrando que conoce la actual. */
+    @Test
+    void usersCanChangeTheirOwnPassword() throws Exception {
+        String admin = login("superadmin");
+        try {
+            createUser(admin, "selfuser", "ENFERMERO");
+            String token = login("selfuser");
+            String url = "/api/auth/password";
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Secret123\",\"passwordNueva\":\"Nueva12345\"}", null).statusCode()).isEqualTo(401);
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Incorrecta1\",\"passwordNueva\":\"Nueva12345\"}", token).statusCode()).isEqualTo(400);
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Secret123\",\"passwordNueva\":\"debil\"}", token).statusCode()).isEqualTo(400);
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Secret123\",\"passwordNueva\":\"Secret123\"}", token).statusCode()).isEqualTo(400);
+            assertThat(request("PUT", url, "{\"passwordActual\":\"Secret123\",\"passwordNueva\":\"Nueva12345\"}", token).statusCode()).isEqualTo(204);
+            // El token anterior deja de servir y la nueva contraseña funciona.
+            assertThat(request("GET", "/api/auth/me", null, token).statusCode()).isEqualTo(401);
+            assertThat(request("POST", "/api/auth/login", "{\"username\":\"selfuser\",\"password\":\"Nueva12345\"}", null).statusCode()).isEqualTo(200);
+        } finally {
+            deleteUser("selfuser");
         }
     }
 }
-
-
-
-
-

@@ -57,12 +57,12 @@ public class SecurityBootstrapService {
                 created.setName(roleName.name());
                 return created;
             });
-            for (PermissionEntity permission : catalog.values()) {
-                if (roleName == UserRoles.Role.ADMIN || "random_order".equals(permission.getName())) {
-                    boolean present = role.getPermissions().stream()
-                            .anyMatch(existing -> existing.getName().equals(permission.getName()));
-                    if (!present) role.getPermissions().add(permission);
-                }
+            // Agrega los permisos base que falten; no quita los que un administrador haya añadido.
+            for (UserRoles.Authority authority : roleName.permissions()) {
+                PermissionEntity permission = catalog.get(authority.value());
+                boolean present = role.getPermissions().stream()
+                        .anyMatch(existing -> existing.getName().equals(permission.getName()));
+                if (!present) role.getPermissions().add(permission);
             }
             roles.save(role);
         }
